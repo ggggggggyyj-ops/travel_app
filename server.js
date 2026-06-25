@@ -255,10 +255,7 @@ app.get('/api/comments', async (req, res) => {
     }
 });
 
-// ==========================================
-// 6. 启动服务器
-// ==========================================
-const PORT = process.env.PORT || 3000; // 改成了兼容 Render 的端口读取
+const PORT = process.env.PORT || 3000; 
 app.listen(PORT, () => {
-    console.log(`🚀 后端服务器已启动！请访问：http://localhost:${PORT}`);
+    console.log(`🚀 后端服务器已启动！运行在端口 ${PORT}`);
 });
