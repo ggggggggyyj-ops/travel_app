@@ -1,0 +1,193 @@
+/* 顶部导航栏（首页通用） */
+.header {
+    height: 84px; /* 导航栏稍微加高一点，显得大气 */
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(8, 11, 18, .94);
+    backdrop-filter: blur(12px);
+    display: flex;
+    align-items: center;
+    gap: 22px;
+    padding: 0 28px;
+    border-bottom: 1px solid var(--line)
+}
+
+.logo {
+    width: 145px;
+    line-height: .9
+}
+.logo b {
+    font-size: 28px;
+    color: var(--gold);
+    letter-spacing: 2px
+}
+.logo span {
+    display: block;
+    font-size: 15px;
+    letter-spacing: 5px;
+    color: #cfd0d7
+}
+
+/* ===== 核心改动：让首页与详情页的按钮和标签变大 ===== */
+.navbtn, .tab, .auth button {
+    border: 1px solid var(--line);
+    background: var(--panel2);
+    color: #ddd;
+    border-radius: 30px;
+    padding: 14px 28px; /* 内边距加大，按钮变大 */
+    font-weight: 900;
+    font-size: 18px; /* 字体加大 */
+    cursor: pointer
+}
+.tab.active, .navbtn:hover {
+    border-color: #8e824d;
+    color: #fff;
+    background: #2a2f3d
+}
+
+.auth {
+    margin-left: auto;
+    display: flex;
+    gap: 14px
+}
+.auth .reg {
+    background: linear-gradient(120deg, var(--gold), var(--gold2));
+    color: #111
+}
+
+/* 侧边栏与主区域 */
+.app {
+    display: grid;
+    grid-template-columns: var(--side) 1fr
+}
+
+.side {
+    position: sticky;
+    top: 84px;
+    height: calc(100vh - 84px);
+    overflow-y: auto;
+    border-right: 1px solid var(--line);
+    padding: 24px 18px;
+    background: #090d17
+}
+
+.main {
+    min-width: 0;
+    padding: 24px 34px 80px;
+}
+
+/* 详情页基础布局 */
+.detail {
+    display: none;
+    padding: 0 28px 70px
+}
+
+.detailbar {
+    height: 78px;
+    display: flex;
+    align-items: center;
+    gap: 20px;
+    border-bottom: 1px solid var(--line);
+    position: sticky;
+    top: 84px;
+    background: rgba(8, 11, 18, .96);
+    z-index: 90
+}
+
+.detailbar h1 {
+    color: var(--gold);
+    font-size: 30px;
+    font-family: Georgia, "SimSun", serif
+}
+
+.back {
+    border: 1px solid var(--line);
+    background: var(--panel2);
+    color: #ddd;
+    border-radius: 30px;
+    padding: 14px 32px; /* 详情页的返回按钮也变大 */
+    font-weight: 900;
+    font-size: 18px; 
+    cursor: pointer
+}
+
+.detail-layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: 24px;
+    margin-top: 24px;
+    padding-top: 0;
+}
+
+.detail-main .hero {
+    height: 430px
+}
+
+/* 登录/注册弹窗 */
+.modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    z-index: 400;
+    background: rgba(0, 0, 0, .55);
+    backdrop-filter: blur(8px);
+    align-items: center;
+    justify-content: center
+}
+.modal.show {
+    display: flex
+}
+
+.toast {
+    position: fixed;
+    left: 50%;
+    bottom: 90px;
+    transform: translateX(-50%);
+    background: #182033;
+    border: 1px solid #435070;
+    border-radius: 14px;
+    padding: 12px 18px;
+    z-index: 500;
+    display: none
+}
+
+/* ========================================================= */
+/* ===== 绝对必加代码：详情页头部隐藏 Logo，完美复刻图4 ===== */
+/* ========================================================= */
+#headerDetail .logo {
+    display: none !important;
+}
+
+/* 响应式适配 */
+@media(max-width:1100px) {
+    :root { --side: 250px }
+    .detail-layout { grid-template-columns: 1fr }
+}
+@media(max-width:750px) {
+    :root { --side: 0px }
+    .side { display: none }
+    .grid { grid-template-columns: 1fr }
+    .header { gap: 10px; padding: 0 12px; height: 64px; flex-wrap: wrap; }
+    .logo b { font-size: 20px; }
+    .tab { font-size: 12px; padding: 6px 12px; }
+    .auth button { font-size: 12px; padding: 6px 12px; }
+    .main { padding: 12px; }
+    .hero { height: 300px; }
+}
+/* 个人主页弹窗样式 */
+.profilebox {
+    max-width: 600px;
+    width: 100%;
+    background: #111623;
+    padding: 30px;
+    border-radius: 24px;
+    border: 1px solid #3f4656;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.8);
+    display: flex;
+    flex-direction: column;
+    max-height: 90vh;
+    position: relative;
+}
+.profilebox::-webkit-scrollbar { width: 6px; }
+.profilebox::-webkit-scrollbar-thumb { background: #f4dd83; border-radius: 99px; }

@@ -1,0 +1,218 @@
+/* --- 详情页内部组件 --- */
+.info-card {
+    border: 1px solid var(--line);
+    border-radius: 26px;
+    background: var(--panel);
+    padding: 28px;
+    margin-bottom: 24px
+}
+.info-card h2 {
+    font-size: 32px;
+    color: var(--gold);
+    margin: 0 0 18px
+}
+.info-card p, .info-card li {
+    font-size: 18px;
+    line-height: 1.9;
+    color: #d8d8d8
+}
+.budget-list {
+    display: grid;
+    gap: 18px
+}
+.budget-item {
+    border: 1px solid #424858;
+    border-radius: 22px;
+    background: #202532;
+    padding: 24px 28px
+}
+.budget-item b {
+    display: block;
+    color: var(--gold);
+    font-size: 25px;
+    margin-bottom: 12px
+}
+.food-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px
+}
+.food-tags span {
+    background: #202532;
+    border: 1px solid #424858;
+    border-radius: 999px;
+    padding: 11px 16px;
+    font-size: 18px
+}
+
+/* ========================================== */
+/* 评论模块优化：让顶部文字和按钮更紧凑贴边   */
+/* ========================================== */
+.comments {
+    position: sticky;
+    top: 100px;
+    height: calc(100vh - 118px);
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 26px;
+    padding: 16px; /* 缩小外框的内边距 */
+    display: flex;
+    flex-direction: column
+}
+
+/* 修正旅客评价标题的下方留白，让按钮上移 */
+.comments h2 {
+    margin: 0 0 8px 0; 
+    color: var(--gold);
+    font-size: 28px;
+}
+
+/* 修正排序按钮的底部留白，让下方评论列表上移 */
+.sorts {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 10px;
+}
+.sorts button {
+    border: 1px solid #4a5060;
+    background: #252a36;
+    color: #ddd;
+    border-radius: 999px;
+    padding: 10px 16px;
+    font-weight: 900;
+    cursor: pointer
+}
+.sorts .active {
+    border-color: #8f824e;
+    background: #343845
+}
+
+.comment-list {
+    flex: 1;
+    overflow-y: auto;
+    padding-right: 8px
+}
+.comment-list::-webkit-scrollbar {
+    width: 7px
+}
+.comment-list::-webkit-scrollbar-thumb {
+    background: rgba(244, 221, 131, .42);
+    border-radius: 99px
+}
+.comment-item {
+    background: #202532;
+    border: 1px solid #424858;
+    border-radius: 18px;
+    padding: 14px;
+    margin-bottom: 14px
+}
+.comment-head {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-size: 14px;
+    color: #aaa
+}
+.avatar {
+    width: 34px;
+    height: 34px;
+    border-radius: 50%;
+    background: #7d68f0;
+    display: grid;
+    place-items: center;
+    font-weight: 900;
+    color: white
+}
+.comment-item b {
+    color: white
+}
+.comment-item p {
+    font-size: 15px;
+    line-height: 1.6;
+    color: #ddd
+}
+.actions {
+    display: flex;
+    gap: 16px;
+    color: var(--gold);
+    font-weight: 900
+}
+.replybox {
+    margin: 10px 0 0 42px;
+    background: #2a2f3c;
+    border-left: 3px solid #8f824e;
+    border-radius: 12px;
+    padding: 10px;
+    color: #d7d7d7;
+    font-size: 14px
+}
+.comment-form {
+    margin-top: 14px
+}
+.comment-form textarea {
+    width: 100%;
+    height: 68px;
+    border-radius: 14px;
+    background: #252a36;
+    border: 1px solid #4a5060;
+    color: #fff;
+    font-size: 14px;
+    padding: 12px
+}
+.comment-form button {
+    width: 100%;
+    height: 46px;
+    margin-top: 8px;
+    border: 0;
+    border-radius: 14px;
+    background: linear-gradient(120deg, var(--gold), var(--gold2));
+    font-weight: 900;
+    font-size: 16px
+}
+
+/* 【修复点】只在详情页（Detail）出现时，隐藏它的父级容器 */
+.detail ~ header #homeFilterTabs {
+    display: none !important;
+}
+
+/* 专门给详情页大图用的样式，不干扰首页 */
+.detail-hero {
+    height: 460px;
+    border-radius: 20px;
+    overflow: hidden;
+    position: relative;
+    margin-top: 0; /* 完美贴顶 */
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    cursor: pointer;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+}
+
+/* 绝对修改：详情页大图，单纯展示图片，不留任何其他痕迹 */
+.detail-hero {
+    width: 100%;
+    height: 460px;
+    border-radius: 20px;
+    overflow: hidden;
+    margin-bottom: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    /* 强制让 .scene 的内容居中 */
+}
+
+/* 清除大图 scene 里面的所有文字特效 */
+.detail-hero .cityname, 
+.detail-hero .sub, 
+.detail-hero .feature-line,
+.detail-hero .badges,
+.detail-hero .intro {
+    display: none !important;
+}
+
+/* 强制大图内部图片撑满（解决您截图里字很小、位置不对的问题） */
+.detail-hero .scene {
+    width: 100%;
+    height: 100%;
+    background-size: cover !important;
+    background-position: center center !important;
+}
