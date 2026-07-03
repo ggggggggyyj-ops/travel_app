@@ -74,7 +74,17 @@ async function importTable(conn, tableName) {
     return;
   }
 
-  const columns = await getColumns(conn, tableName);
+  let columns;
+  try {
+    columns = await getColumns(conn, tableName);
+  } catch (err) {
+    if (err.code === "ER_NO_SUCH_TABLE") {
+      console.log(`Skip import ${tableName}: table does not exist`);
+      return;
+    }
+    throw err;
+  }
+
   let imported = 0;
 
   for (const row of rows) {
