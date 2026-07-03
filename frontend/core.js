@@ -12,46 +12,14 @@ let activeFilters = null;
 let activeKeyword = '';
 let previousScroll = 0;
 let currentCity = null;
-
-// ================================
-// 用户状态
-// ================================
 let currentUser = null;
-const USER_STORE_KEY = 'travel_users';
+let pickerTarget = 'base';
+let pickerRegion = '国内';
+let currentCommentSort = 'hot';
+let allCityCache = {};
+
+const USER_STORE_KEY = 'travel_current_user';
 const DEFAULT_AVATAR = 'https://images.unsplash.com/photo-1535713875002-d1d0cf377fde?w=100';
-
-function normalizeUser(u) {
-  return {
-    username: u.username || u.phone || '',
-    phone: u.phone || u.username || '',
-    password: u.password || '',
-    avatar: u.avatar || DEFAULT_AVATAR,
-    comments: Array.isArray(u.comments) ? u.comments : [],
-    likes: Array.isArray(u.likes) ? u.likes : [],
-    replies: Array.isArray(u.replies) ? u.replies : [],
-  };
-}
-
-function loadUserStore() {
-  try {
-    const saved = JSON.parse(localStorage.getItem(USER_STORE_KEY) || '[]');
-    return Array.isArray(saved) ? saved.map(normalizeUser) : [];
-  } catch (e) {
-    return [];
-  }
-}
-
-function saveUserStore() {
-  try {
-    localStorage.setItem(USER_STORE_KEY, JSON.stringify(fakeUsers));
-  } catch (e) {}
-}
-
-function isValidPhone(phone) {
-  return /^1[3-9]\d{9}$/.test(String(phone || '').trim());
-}
-
-const fakeUsers = loadUserStore();
 
 const tags = [
   '海边',
@@ -85,12 +53,14 @@ function esc(s) {
 
 function toast(t) {
   const e = document.getElementById('toast');
+
   if (!e) return;
 
   e.textContent = t;
   e.style.display = 'block';
 
   clearTimeout(e._timer);
+
   e._timer = setTimeout(() => {
     e.style.display = 'none';
   }, 1800);
@@ -153,6 +123,105 @@ function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function parseMaybeJSON(value, fallback = null) {
+  if (value == null || value === '') return fallback;
+  if (typeof value !== 'string') return value;
+
+  try {
+    return JSON.parse(value);
+  } catch (e) {
+    return fallback;
+  }
+}
+
+function normalizeText(value) {
+  if (value == null) return '';
+
+  if (Array.isArray(value)) {
+    return value.join('、');
+  }
+
+  const parsed = parseMaybeJSON(value, null);
+
+  if (Array.isArray(parsed)) {
+    return parsed.join('、');
+  }
+
+  if (parsed && typeof parsed === 'object') {
+    return Object.values(parsed).join(' ');
+  }
+
+  return String(value)
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .trim();
+}
+
+function splitItems(value) {
+  const parsed = parseMaybeJSON(value, null);
+
+  if (Array.isArray(parsed)) {
+    return parsed.map((x) => String(x).trim()).filter(Boolean);
+  }
+
+  return normalizeText(value)
+    .split(/[，、,;；\n]/)
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
+function formatTime(t) {
+  if (!t) return '';
+
+  const d = new Date(t);
+
+  if (Number.isNaN(d.getTime())) {
+    return String(t);
+  }
+
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  const h = String(d.getHours()).padStart(2, '0');
+  const min = String(d.getMinutes()).padStart(2, '0');
+
+  return `${y}-${m}-${day} ${h}:${min}`;
+}
+
+function getNumber(value) {
+  if (value == null || value === '') return null;
+
+  const n = Number(value);
+
+  if (Number.isFinite(n)) return n;
+
+  const match = String(value).match(/\d+(?:\.\d+)?/);
+
+  return match ? Number(match[0]) : null;
+}
+
+function getCurrentMonthLabel() {
+  const monthMap = [
+    '1月',
+    '2月',
+    '3月',
+    '4月',
+    '5月',
+    '6月',
+    '7月',
+    '8月',
+    '9月',
+    '10月',
+    '11月',
+    '12月',
+  ];
+
+  return monthMap[new Date().getMonth()];
+}
+
+// ================================
+// 3. 加载提示与补丁样式
+// ================================
 function showThinking() {
   let mask = document.getElementById('thinkingMask');
 
@@ -173,7 +242,10 @@ function showThinking() {
 
 function hideThinking() {
   const mask = document.getElementById('thinkingMask');
-  if (mask) mask.style.display = 'none';
+
+  if (mask) {
+    mask.style.display = 'none';
+  }
 }
 
 function injectBugFixStyles() {
@@ -181,6 +253,7 @@ function injectBugFixStyles() {
 
   const style = document.createElement('style');
   style.id = 'coreBugFixStyles';
+
   style.textContent = `
         #cityGrid .card {
             cursor: pointer;
@@ -266,6 +339,43 @@ function injectBugFixStyles() {
             animation: thinkingSpin 0.85s linear infinite;
         }
 
+        .comment-meta {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 12px;
+            margin-top: 10px;
+            font-size: 13px;
+            color: rgba(255, 255, 255, 0.58);
+        }
+
+        .comment-like-btn {
+            border: 0;
+            background: transparent;
+            color: #f5d382;
+            cursor: pointer;
+            font-weight: 800;
+            padding: 0;
+        }
+
+        .detail-meta-grid {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-top: 14px;
+        }
+
+        .detail-meta-grid span {
+            display: inline-flex;
+            align-items: center;
+            border: 1px solid rgba(255,255,255,.16);
+            border-radius: 999px;
+            padding: 8px 14px;
+            background: rgba(255,255,255,.04);
+            color: rgba(255,255,255,.86);
+            font-weight: 700;
+        }
+
         @keyframes thinkingSpin {
             to {
                 transform: rotate(360deg);
@@ -276,6 +386,35 @@ function injectBugFixStyles() {
   document.head.appendChild(style);
 }
 
+// ================================
+// 4. API 请求
+// ================================
+async function fetchData(endpoint = '/cities', options = {}) {
+  try {
+    const response = await fetch(`${API_BASE}${endpoint}`, options);
+
+    if (!response.ok) return [];
+
+    return await response.json().catch(() => []);
+  } catch (error) {
+    console.error('API 请求失败:', error);
+    return [];
+  }
+}
+
+async function postJSON(endpoint, body = {}) {
+  return fetchData(endpoint, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+// ================================
+// 5. 图片与场景
+// ================================
 function getCityImage(c) {
   if (!c) return '';
 
@@ -335,7 +474,7 @@ function scene(c) {
 }
 
 function oneLine(c) {
-  let t = c.intro || '';
+  let t = c.intro || c.detail_intro || '';
 
   if (!t) return '暂无介绍';
 
@@ -348,26 +487,200 @@ function oneLine(c) {
 }
 
 // ================================
-// 3. 核心渲染
+// 6. 数据归一化与搜索匹配
 // ================================
-function getCurrentMonthLabel() {
-  const monthMap = [
-    '1月',
-    '2月',
-    '3月',
-    '4月',
-    '5月',
-    '6月',
-    '7月',
-    '8月',
-    '9月',
-    '10月',
-    '11月',
-    '12月',
-  ];
-  return monthMap[new Date().getMonth()];
+function getCityBudget(c) {
+  const direct = getNumber(
+    c.budget ?? c.budget_max ?? c.avg_budget ?? c.average_budget ?? c.cost ?? c.price
+  );
+
+  if (direct != null) return direct;
+
+  const text = normalizeText(
+    c.budgetPlans || c.budget_plans || c.budget_plan || c.plan || c.intro
+  );
+  const nums = [...text.matchAll(/\d+/g)]
+    .map((m) => Number(m[0]))
+    .filter(Number.isFinite);
+
+  return nums.length ? Math.min(...nums) : null;
 }
 
+function getCityDaysMin(c) {
+  const direct = getNumber(c.days_min ?? c.min_days ?? c.days);
+
+  if (direct != null) return direct;
+
+  const text = normalizeText(
+    c.days_text || c.duration || c.budgetPlans || c.budget_plans || c.budget_plan
+  );
+  const nums = [...text.matchAll(/(\d+)\s*天/g)]
+    .map((m) => Number(m[1]))
+    .filter(Number.isFinite);
+
+  return nums.length ? Math.min(...nums) : null;
+}
+
+function getCityDaysMax(c) {
+  const direct = getNumber(c.days_max ?? c.max_days);
+
+  if (direct != null) return direct;
+
+  const text = normalizeText(
+    c.days_text || c.duration || c.budgetPlans || c.budget_plans || c.budget_plan
+  );
+  const nums = [...text.matchAll(/(\d+)\s*天/g)]
+    .map((m) => Number(m[1]))
+    .filter(Number.isFinite);
+
+  return nums.length ? Math.max(...nums) : null;
+}
+
+function getCityTypeText(c) {
+  return [
+    c.tags,
+    c.type,
+    c.types,
+    c.travel_type,
+    c.travel_types,
+    c.tourism_type,
+    c.tourism_types,
+    c.category,
+    c.categories,
+    c.highlights,
+    c.food,
+    c.intro,
+    c.detail_intro,
+  ]
+    .map(normalizeText)
+    .join(' ');
+}
+
+function cityMatchesTags(c, selectedTags) {
+  if (!selectedTags.length) return true;
+
+  const text = getCityTypeText(c);
+
+  return selectedTags.every((tag) => text.includes(tag));
+}
+
+function cityMatchesBudget(c, budget) {
+  if (!budget) return true;
+
+  const cityBudget = getCityBudget(c);
+
+  if (cityBudget == null) return true;
+
+  return cityBudget <= Number(budget);
+}
+
+function cityMatchesDays(c, days) {
+  if (!days) return true;
+
+  const target = Number(days);
+  const min = getCityDaysMin(c);
+  const max = getCityDaysMax(c);
+
+  if (min == null && max == null) return true;
+  if (min != null && max != null) return min <= target && target <= max;
+  if (min != null) return min <= target;
+  if (max != null) return target <= max;
+
+  return true;
+}
+
+async function getAllCitiesForSearch(region = 'all') {
+  const key = region || 'all';
+
+  if (allCityCache[key]) {
+    return allCityCache[key];
+  }
+
+  const pickerRegionValue =
+    key === 'all'
+      ? 'all'
+      : key === 'domestic'
+      ? 'domestic'
+      : key === 'abroad'
+      ? 'abroad'
+      : key;
+  const pickerList = await fetchData(
+    `/api/picker/list?region=${encodeURIComponent(pickerRegionValue)}`
+  );
+  const names = Array.isArray(pickerList)
+    ? pickerList.map((c) => c.name).filter(Boolean)
+    : [];
+
+  let list = [];
+
+  if (names.length) {
+    const chunks = names.slice(0, 300);
+    list = await Promise.all(
+      chunks.map((name) => fetchData(`/api/city?name=${encodeURIComponent(name)}`))
+    );
+    list = list.filter((item) => item && !Array.isArray(item));
+  }
+
+  if (!list.length) {
+    const top = await fetchData(
+      `/api/top30?region=${encodeURIComponent(pickerRegionValue)}`
+    );
+    list = Array.isArray(top) ? top : [];
+  }
+
+  allCityCache[key] = list;
+
+  return list;
+}
+
+async function clientFallbackSearch({ baseCity, budget, days, selectedTags }) {
+  const list = await getAllCitiesForSearch(currentRegion);
+  let result = list.filter((c) => {
+    return (
+      cityMatchesBudget(c, budget) &&
+      cityMatchesDays(c, days) &&
+      cityMatchesTags(c, selectedTags)
+    );
+  });
+
+  if (baseCity) {
+    const baseCityData = await fetchData(
+      `/api/city?name=${encodeURIComponent(baseCity)}`
+    );
+
+    if (baseCityData && !Array.isArray(baseCityData)) {
+      const baseLat = Number(baseCityData.lat);
+      const baseLng = Number(baseCityData.lng);
+
+      if (Number.isFinite(baseLat) && Number.isFinite(baseLng)) {
+        result = result
+          .map((c) => {
+            const lat = Number(c.lat);
+            const lng = Number(c.lng);
+            const distance =
+              Number.isFinite(lat) && Number.isFinite(lng)
+                ? km(baseLat, baseLng, lat, lng)
+                : 999999;
+
+            return { ...c, distance };
+          })
+          .filter((c) => c.name !== baseCityData.name)
+          .sort(
+            (a, b) =>
+              a.distance - b.distance || Number(b.score || 0) - Number(a.score || 0)
+          );
+      }
+    }
+  } else {
+    result = result.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+  }
+
+  return result.slice(0, 30);
+}
+
+// ================================
+// 7. 核心渲染
+// ================================
 function applyTitleStyle() {
   const pageTitle = document.getElementById('pageTitle');
 
@@ -458,28 +771,14 @@ function bindCityGridClick() {
 
     const name = card.getAttribute('data-city-name');
 
-    if (name) openDetail(name);
+    if (name) {
+      openDetail(name);
+    }
   });
 }
 
 // ================================
-// 4. API 请求
-// ================================
-async function fetchData(endpoint = '/cities', options = {}) {
-  try {
-    const response = await fetch(`${API_BASE}${endpoint}`, options);
-
-    if (!response.ok) return [];
-
-    return await response.json().catch(() => []);
-  } catch (error) {
-    console.error('API 请求失败:', error);
-    return [];
-  }
-}
-
-// ================================
-// 5. 核心业务逻辑
+// 8. 首页 / 搜索 / 地区
 // ================================
 async function triggerSearch() {
   showThinking();
@@ -490,9 +789,9 @@ async function triggerSearch() {
     const baseCity = (document.getElementById('baseCityInput')?.value || '').trim();
     const budget = Number(document.getElementById('budgetInput')?.value || 0);
     const days = document.getElementById('daysInput')?.value || '';
-    const selectedTags = [...document.querySelectorAll('.chip.active')].map((x) =>
-      x.textContent
-    );
+    const selectedTags = [...document.querySelectorAll('.chip.active')]
+      .map((x) => x.textContent.trim())
+      .filter(Boolean);
 
     if (!baseCity && !budget && !days && selectedTags.length === 0) {
       await goHome();
@@ -500,6 +799,8 @@ async function triggerSearch() {
     }
 
     mode = 'filter';
+
+    let data = [];
 
     if (baseCity) {
       const baseCityData = await fetchData(
@@ -520,15 +821,13 @@ async function triggerSearch() {
         tags: selectedTags.join(','),
       });
 
-      const data = await fetchData(`/api/search/full?${params.toString()}`);
+      data = await fetchData(`/api/search/full?${params.toString()}`);
 
-      if (data) {
-        showList(
-          `从${baseCityData.name}出发 · 旅游推荐`,
-          data,
-          `距离最近`
-        );
+      if (!Array.isArray(data) || !data.length) {
+        data = await clientFallbackSearch({ baseCity, budget, days, selectedTags });
       }
+
+      showList(`从${baseCityData.name}出发 · 旅游推荐`, data, '距离最近');
     } else {
       const params = new URLSearchParams({
         region: currentRegion,
@@ -537,11 +836,17 @@ async function triggerSearch() {
         tags: selectedTags.join(','),
       });
 
-      const data = await fetchData(`/api/search/filter?${params.toString()}`);
+      data = await fetchData(`/api/search/filter?${params.toString()}`);
 
-      if (data) {
-        showList('搜索推荐结果', data, `匹配成功`);
+      if (!Array.isArray(data) || !data.length) {
+        data = await clientFallbackSearch({ baseCity, budget, days, selectedTags });
       }
+
+      showList('搜索推荐结果', data, '匹配成功');
+    }
+
+    if (!Array.isArray(data) || !data.length) {
+      toast('没有找到匹配城市');
     }
 
     window.scrollTo({ top: 0, behavior: 'instant' });
@@ -568,7 +873,7 @@ async function goHome() {
     x.classList.toggle('active', x.dataset.r === 'all');
   });
 
-  const data = await fetchData(`/api/top30?region=all`);
+  const data = await fetchData('/api/top30?region=all');
   const list = Array.isArray(data) ? data : [];
 
   showList(`${getCurrentMonthLabel()}全部热门城市TOP30`, list, 'TOP 1');
@@ -581,16 +886,18 @@ async function setRegion(r, el) {
 
   document.querySelectorAll('.tab').forEach((x) => x.classList.remove('active'));
 
-  if (el) el.classList.add('active');
+  if (el) {
+    el.classList.add('active');
+  }
 
   const monthLabel = getCurrentMonthLabel();
-  const regionTitle =
-    r === 'all' ? '全部' : r === 'domestic' ? '国内' : '国外';
+  const regionTitle = r === 'all' ? '全部' : r === 'domestic' ? '国内' : '国外';
   const data = await fetchData(`/api/top30?region=${r}`);
 
-  if (data) {
-    showList(`${monthLabel}${regionTitle}热门城市TOP30`, data);
-  }
+  showList(
+    `${monthLabel}${regionTitle}热门城市TOP30`,
+    Array.isArray(data) ? data : []
+  );
 
   window.scrollTo({ top: 0, behavior: 'instant' });
 }
@@ -602,18 +909,17 @@ async function keywordSearch(v) {
 
   const baseCityInput = document.getElementById('baseCityInput');
 
-  if (baseCityInput) baseCityInput.value = v;
+  if (baseCityInput) {
+    baseCityInput.value = v;
+  }
 
   await triggerSearch();
 }
 
 // ================================
-// 6. Picker
+// 9. 城市选择器
 // ================================
-let pickerTarget = 'top';
-let pickerRegion = '国内';
-
-async function openPicker(target = 'top') {
+async function openPicker(target = 'base') {
   pickerTarget = target;
 
   const picker = document.getElementById('picker');
@@ -633,7 +939,9 @@ async function openPicker(target = 'top') {
 function closePicker() {
   const picker = document.getElementById('picker');
 
-  if (picker) picker.classList.remove('show');
+  if (picker) {
+    picker.classList.remove('show');
+  }
 }
 
 window.switchPickerRegion = function (region, btn) {
@@ -643,7 +951,9 @@ window.switchPickerRegion = function (region, btn) {
     b.classList.remove('active')
   );
 
-  if (btn) btn.classList.add('active');
+  if (btn) {
+    btn.classList.add('active');
+  }
 
   renderPicker(document.getElementById('pickerInput')?.value || '');
 };
@@ -673,7 +983,9 @@ async function renderPicker(keyword = '') {
   list.forEach((city) => {
     const letter = (city.pinyin || '#')[0].toUpperCase();
 
-    if (!groups[letter]) groups[letter] = [];
+    if (!groups[letter]) {
+      groups[letter] = [];
+    }
 
     groups[letter].push(city);
   });
@@ -711,7 +1023,9 @@ function bindPickerClick() {
 
     const name = btn.getAttribute('data-picker-city');
 
-    if (name) chooseCity(name);
+    if (name) {
+      chooseCity(name);
+    }
   });
 }
 
@@ -732,11 +1046,63 @@ function chooseCity(name) {
   toast(`已选择出发城市：${name}`);
 }
 
+function clearBaseCity() {
+  const baseCityInput = document.getElementById('baseCityInput');
+  const clearCityBtn = document.getElementById('clearCityBtn');
+
+  if (baseCityInput) baseCityInput.value = '';
+  if (clearCityBtn) clearCityBtn.style.display = 'none';
+
+  triggerSearch();
+}
+
+// ================================
+// 10. 详情页
+// ================================
 function budgetHTML(c) {
-  return `
-        <div class="budget-item">预算参考：${esc(c.budget || '暂无')}</div>
-        <div class="budget-item">推荐评分：${esc(c.score || '暂无')}</div>
+  const score = c.score || c.rating || '暂无';
+  const budget = c.budget || c.budget_max || c.avg_budget || '暂无';
+  const daysMin = c.days_min || c.min_days || '';
+  const daysMax = c.days_max || c.max_days || '';
+  const typeText =
+    splitItems(c.tags || c.type || c.types || c.travel_type || c.tourism_type).join(
+      '、'
+    ) || '暂无';
+  const budgetPlans =
+    c.budgetPlans || c.budget_plans || c.budget_plan || c.plan || c.plans || '';
+
+  let html = `
+        <div class="detail-meta-grid">
+            <span>评分：${esc(score)}</span>
+            <span>预算：${esc(budget)}</span>
+            <span>天数：${esc(daysMin || '不限')}${daysMax ? `-${esc(daysMax)}` : ''}</span>
+            <span>类型：${esc(typeText)}</span>
+        </div>
     `;
+
+  const parsed = parseMaybeJSON(budgetPlans, null);
+
+  if (Array.isArray(parsed) && parsed.length) {
+    html += parsed
+      .map(
+        (item, index) => `
+            <div class="budget-item">
+                <b>${esc(item.name || item.title || `方案${index + 1}`)}</b>
+                <div style="white-space:pre-wrap;">${esc(
+                  normalizeText(
+                    item.text || item.content || item.desc || item.description || ''
+                  )
+                )}</div>
+            </div>
+        `
+      )
+      .join('');
+  } else if (normalizeText(budgetPlans)) {
+    html +=
+      `<div class="budget-item" style="white-space:pre-wrap;">${esc(normalizeText(budgetPlans))}</div>`;
+  }
+
+  return html;
 }
 
 async function openDetail(n) {
@@ -749,7 +1115,8 @@ async function openDetail(n) {
     return;
   }
 
-  if (!c.intro) c.intro = `${c.name}是一座拥有独特魅力的城市，期待您的探索。`;
+  if (!c.intro && !c.detail_intro)
+    c.intro = `${c.name}是一座拥有独特魅力的城市，期待您的探索。`;
   if (!c.food) c.food = '当地特色美食';
   if (!c.highlights || c.highlights.length === 0)
     c.highlights = ['城市地标', '历史街区', '特色美食'];
@@ -774,23 +1141,9 @@ async function openDetail(n) {
   forceScrollTop();
 
   if (dHero) dHero.innerHTML = scene(c);
-  if (dIntro) dIntro.textContent = c.detail_intro || c.intro;
+  if (dIntro) dIntro.textContent = normalizeText(c.detail_intro || c.intro);
   if (dBudget) dBudget.innerHTML = budgetHTML(c);
 
-  let rawSpots = c.highlights;
-
-  if (typeof rawSpots === 'string') {
-    rawSpots = rawSpots
-      .split(/[，、,]/)
-      .map((item) => item.trim())
-      .filter((item) => item.length > 0);
-  }
-
-  if (!Array.isArray(rawSpots) || rawSpots.length === 0) {
-    rawSpots = ['城市地标', '历史街区', '特色美食'];
-  }
-
-  const spots = rawSpots.slice(0, 6);
   const dSpots = document.getElementById('dSpots');
 
   if (dSpots) {
@@ -798,15 +1151,22 @@ async function openDetail(n) {
       `/api/city/attractions?name=${encodeURIComponent(c.name)}`
     );
     const attractionList = Array.isArray(attractionData) ? attractionData : [];
+    let rawSpots = splitItems(c.highlights).slice(0, 6);
+
+    if (!rawSpots.length) {
+      rawSpots = ['城市地标', '历史街区', '特色美食'];
+    }
 
     const displaySpots = attractionList.length
       ? attractionList.slice(0, 6).map((item) => ({
           name: item.name || '推荐景点',
           image: getAttractionImage(item),
+          desc: item.search_override || item.description || item.intro || '',
         }))
-      : spots.map((name) => ({
+      : rawSpots.map((name) => ({
           name,
           image: '',
+          desc: '',
         }));
 
     dSpots.innerHTML = `
@@ -847,32 +1207,27 @@ async function openDetail(n) {
   const dFood = document.getElementById('dFood');
 
   if (dFood) {
-    dFood.innerHTML = String(c.food || '')
-      .split(/[、，,]/)
-      .map((x) => x.trim())
-      .filter(Boolean)
+    dFood.innerHTML = splitItems(c.food)
       .map((x) => `<span>${esc(x)}</span>`)
       .join('');
   }
-
-  let transportText = c.transport_tips || '暂无详细交通建议。';
-  transportText = transportText.replace(/\\n/g, '\n');
 
   const dTransport = document.getElementById('dTransport');
 
   if (dTransport) {
     dTransport.innerHTML =
-      `<div style="white-space:pre-wrap;">${esc(transportText)}</div>`;
+      `<div style="white-space:pre-wrap;">${esc(
+        normalizeText(c.transport_tips || c.transport || '暂无详细交通建议。')
+      )}</div>`;
   }
-
-  let stayText = c.stay_tips || '暂无详细住宿建议。';
-  stayText = stayText.replace(/\\n/g, '\n');
 
   const dStay = document.getElementById('dStay');
 
   if (dStay) {
     dStay.innerHTML =
-      `<div style="white-space:pre-wrap;">${esc(stayText)}</div>`;
+      `<div style="white-space:pre-wrap;">${esc(
+        normalizeText(c.stay_tips || c.stay || '暂无详细住宿建议。')
+      )}</div>`;
   }
 
   forceScrollTop();
@@ -900,42 +1255,39 @@ function backToList() {
 }
 
 // ================================
-// 7. 评论系统
+// 11. 评论系统
 // ================================
 async function loadComments(cityName, sortType = 'hot') {
   const container = document.getElementById('commentList');
 
   if (!container) return;
 
+  currentCommentSort = sortType;
+
   const data = await fetchData(
     `/api/comments?city=${encodeURIComponent(cityName)}&sort=${sortType}`
   );
+  const comments = Array.isArray(data) ? data : [];
 
-  const remoteComments = Array.isArray(data) ? data : [];
-  const localComments = fakeUsers
-    .flatMap((u) =>
-      (Array.isArray(u.comments) ? u.comments : []).map((c) => ({
-        ...c,
-        username: u.username || u.phone || '用户',
-      }))
-    )
-    .filter((c) => c.city === cityName);
+  container.innerHTML = comments.length
+    ? comments
+        .map((comment) => {
+          const likes = comment.likes ?? comment.like_count ?? 0;
+          const time = comment.created_at || comment.time || comment.createdAt || '';
 
-  const allComments =
-    sortType === 'new'
-      ? [...localComments, ...remoteComments]
-      : [...remoteComments, ...localComments];
-
-  container.innerHTML = allComments.length
-    ? allComments
-        .map(
-          (comment) => `
-        <div class="comment-item">
-            <b>${esc(comment.username || comment.phone || '')}</b>
-            <p>${esc(comment.content || '')}</p>
-        </div>
-    `
-        )
+          return `
+                <div class="comment-item">
+                    <b>${esc(comment.username || comment.phone || '游客')}</b>
+                    <p>${esc(comment.content || '')}</p>
+                    <div class="comment-meta">
+                        <span>${esc(formatTime(time))}</span>
+                        <button class="comment-like-btn" onclick="likeComment(${jsArg(
+                          comment.id
+                        )})">点赞 ${esc(likes)}</button>
+                    </div>
+                </div>
+            `;
+        })
         .join('')
     : `<div class="comment-item"><p>暂无评论</p></div>`;
 }
@@ -945,14 +1297,16 @@ function switchSort(sortType, btn) {
     b.classList.remove('active')
   );
 
-  if (btn) btn.classList.add('active');
+  if (btn) {
+    btn.classList.add('active');
+  }
 
   if (currentCity && currentCity.name) {
     loadComments(currentCity.name, sortType);
   }
 }
 
-function postComment() {
+async function postComment() {
   if (!currentUser) {
     openLogin('login');
     return;
@@ -966,33 +1320,62 @@ function postComment() {
     return;
   }
 
-  const item = {
-    city: currentCity?.name || '',
+  const result = await postJSON('/api/comments', {
+    user_id: currentUser.id,
+    phone: currentUser.phone,
+    city_name: currentCity?.name || '',
     content: content,
-    time: new Date().toLocaleString(),
-    likes: 0,
-    replies: [],
-  };
+  });
 
-  currentUser.comments = Array.isArray(currentUser.comments)
-    ? currentUser.comments
-    : [];
-  currentUser.comments.unshift(item);
-
-  saveUserStore();
-
-  if (textEl) textEl.value = '';
-
-  toast('评论发布成功');
-
-  if (currentCity && currentCity.name) {
+  if (result && result.ok) {
+    if (textEl) textEl.value = '';
+    toast('评论发布成功');
     loadComments(currentCity.name, 'new');
+  } else {
+    toast(result?.error || '评论发布失败');
+  }
+}
+
+async function likeComment(commentId) {
+  if (!currentUser) {
+    openLogin('login');
+    return;
+  }
+
+  if (!commentId) return;
+
+  const result = await postJSON('/api/comments/like', {
+    user_id: currentUser.id,
+    phone: currentUser.phone,
+    comment_id: commentId,
+  });
+
+  if (result && result.ok) {
+    loadComments(currentCity.name, currentCommentSort);
+  } else {
+    toast(result?.error || '点赞失败');
   }
 }
 
 // ================================
-// 8. 登录系统
+// 12. 登录系统
 // ================================
+function loadUserFromStorage() {
+  try {
+    currentUser = JSON.parse(localStorage.getItem(USER_STORE_KEY) || 'null');
+  } catch (e) {
+    currentUser = null;
+  }
+}
+
+function saveCurrentUser() {
+  if (currentUser) {
+    localStorage.setItem(USER_STORE_KEY, JSON.stringify(currentUser));
+  } else {
+    localStorage.removeItem(USER_STORE_KEY);
+  }
+}
+
 function openLogin(type) {
   const triggerId = window.event?.target?.id;
 
@@ -1015,8 +1398,7 @@ function openLogin(type) {
             <input id="loginUser" type="tel" inputmode="tel" placeholder="手机号">
             <input id="loginPass" type="password" placeholder="密码">
 
-            <button class="primary"
-                onclick="${type === 'login' ? 'doLogin()' : 'doRegister()'}">
+            <button class="primary" onclick="${type === 'login' ? 'doLogin()' : 'doRegister()'}">
                 ${type === 'login' ? '登录' : '注册'}
             </button>
 
@@ -1032,13 +1414,17 @@ function openLogin(type) {
 function closeLogin() {
   const modal = document.getElementById('loginModal');
 
-  if (modal) modal.classList.remove('show');
+  if (modal) {
+    modal.classList.remove('show');
+  }
 }
 
 function closeProfile() {
   const modal = document.getElementById('profileModal');
 
-  if (modal) modal.classList.remove('show');
+  if (modal) {
+    modal.classList.remove('show');
+  }
 }
 
 document.addEventListener('click', (e) => {
@@ -1049,53 +1435,51 @@ document.addEventListener('click', (e) => {
   if (e.target === profileModal) closeProfile();
 });
 
-function doLogin() {
+async function doLogin() {
   const user = document.getElementById('loginUser').value.trim();
   const pass = document.getElementById('loginPass').value.trim();
 
   if (!user || !pass) return toast('请输入手机号和密码');
   if (!isValidPhone(user)) return toast('请输入正确手机号');
 
-  const found = fakeUsers.find(
-    (u) => (u.phone || u.username) === user && u.password === pass
-  );
-
-  if (!found) return toast('手机号或密码错误');
-
-  currentUser = found;
-
-  closeLogin();
-  updateUIForLogin();
-  toast('登录成功');
-}
-
-function doRegister() {
-  const user = document.getElementById('loginUser').value.trim();
-  const pass = document.getElementById('loginPass').value.trim();
-
-  if (!user || !pass) return toast('请输入手机号和密码');
-  if (!isValidPhone(user)) return toast('请输入正确手机号');
-
-  if (fakeUsers.find((u) => (u.phone || u.username) === user)) {
-    return toast('手机号已注册');
-  }
-
-  const newUser = {
-    username: user,
+  const result = await postJSON('/api/auth/login', {
     phone: user,
     password: pass,
-    avatar: DEFAULT_AVATAR,
-    comments: [],
-    likes: [],
-    replies: [],
-  };
+  });
 
-  fakeUsers.push(newUser);
+  if (result && result.ok && result.user) {
+    currentUser = result.user;
+    saveCurrentUser();
+    closeLogin();
+    updateUIForLogin();
+    toast('登录成功');
+  } else {
+    toast(result?.error || '手机号或密码错误');
+  }
+}
 
-  saveUserStore();
+async function doRegister() {
+  const user = document.getElementById('loginUser').value.trim();
+  const pass = document.getElementById('loginPass').value.trim();
 
-  toast('注册成功，请登录');
-  openLogin('login');
+  if (!user || !pass) return toast('请输入手机号和密码');
+  if (!isValidPhone(user)) return toast('请输入正确手机号');
+
+  const result = await postJSON('/api/auth/register', {
+    phone: user,
+    password: pass,
+    nickname: user,
+  });
+
+  if (result && result.ok && result.user) {
+    currentUser = result.user;
+    saveCurrentUser();
+    closeLogin();
+    updateUIForLogin();
+    toast('注册成功');
+  } else {
+    toast(result?.error || '注册失败');
+  }
 }
 
 function changeAvatarFromFile(input) {
@@ -1107,28 +1491,30 @@ function changeAvatarFromFile(input) {
 
   const reader = new FileReader();
 
-  reader.onload = function (e) {
-    currentUser.avatar = e.target.result;
+  reader.onload = async function (e) {
+    const avatarUrl = e.target.result;
 
-    const idx = fakeUsers.findIndex(
-      (u) =>
-        (u.phone || u.username) === (currentUser.phone || currentUser.username)
-    );
+    const result = await postJSON('/api/profile/avatar', {
+      user_id: currentUser.id,
+      phone: currentUser.phone,
+      avatar_url: avatarUrl,
+    });
 
-    if (idx >= 0) {
-      fakeUsers[idx].avatar = currentUser.avatar;
+    if (result && result.ok && result.user) {
+      currentUser = result.user;
+      saveCurrentUser();
+      updateUIForLogin();
+      openProfile();
+      toast('头像已更新');
+    } else {
+      toast(result?.error || '头像更新失败');
     }
-
-    saveUserStore();
-    updateUIForLogin();
-    openProfile();
-    toast('头像已更新');
   };
 
   reader.readAsDataURL(file);
 }
 
-function openProfile() {
+async function openProfile() {
   if (!currentUser) {
     openLogin('login');
     return;
@@ -1138,25 +1524,33 @@ function openProfile() {
 
   if (!modal) return;
 
-  const comments = Array.isArray(currentUser.comments) ? currentUser.comments : [];
-  const likes = Array.isArray(currentUser.likes) ? currentUser.likes : [];
-  const replies = Array.isArray(currentUser.replies) ? currentUser.replies : [];
+  const result = await fetchData(
+    `/api/profile?user_id=${encodeURIComponent(
+      currentUser.id || ''
+    )}&phone=${encodeURIComponent(currentUser.phone || '')}`
+  );
+  const user = result?.user || currentUser;
+  const comments = Array.isArray(user.comments) ? user.comments : [];
+  const likes = Array.isArray(user.likes) ? user.likes : [];
+  const replies = Array.isArray(user.replies) ? user.replies : [];
 
   modal.innerHTML = `
         <div class="loginbox" style="width:min(820px,92vw);max-height:86vh;overflow:auto;padding:30px;border-radius:26px;background:#151a28;border:1px solid rgba(245,211,130,.22);box-shadow:0 28px 80px rgba(0,0,0,.58);">
             <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:18px;margin-bottom:24px;padding-bottom:18px;border-bottom:1px solid rgba(255,255,255,.08);">
                 <div style="display:flex;align-items:center;gap:18px;min-width:0;">
                     <div style="position:relative;flex:0 0 auto;">
-                        <img src="${esc(currentUser.avatar || DEFAULT_AVATAR)}" style="width:82px;height:82px;border-radius:50%;object-fit:cover;border:2px solid rgba(245,211,130,.75);display:block;box-shadow:0 12px 30px rgba(0,0,0,.35);">
+                        <img src="${esc(user.avatar_url || user.avatar || DEFAULT_AVATAR)}" style="width:82px;height:82px;border-radius:50%;object-fit:cover;border:2px solid rgba(245,211,130,.75);display:block;box-shadow:0 12px 30px rgba(0,0,0,.35);">
                         <button onclick="document.getElementById('avatarInput').click()" style="position:absolute;right:-6px;bottom:-6px;width:30px;height:30px;border:1px solid rgba(255,255,255,.2);border-radius:50%;padding:0;background:linear-gradient(135deg,#f6e58d,#e8b96b);color:#111;font-size:13px;font-weight:900;line-height:30px;text-align:center;cursor:pointer;box-shadow:0 6px 16px rgba(0,0,0,.35);">改</button>
                         <input id="avatarInput" type="file" accept="image/*" style="display:none" onchange="changeAvatarFromFile(this)">
                     </div>
+
                     <div style="min-width:0;">
                         <h2 style="margin:0 0 8px;font-size:28px;color:#f6f1df;">个人主页</h2>
-                        <div style="opacity:.78;font-size:15px;word-break:break-all;">手机号：${esc(currentUser.phone || currentUser.username)}</div>
+                        <div style="opacity:.78;font-size:15px;word-break:break-all;">手机号：${esc(user.phone || user.username || '')}</div>
                         <div style="opacity:.45;font-size:13px;margin-top:6px;">点击头像右下角“改”可更换头像</div>
                     </div>
                 </div>
+
                 <button class="secondary" onclick="closeProfile()" style="width:auto;height:auto;margin-top:0;padding:10px 18px;border-radius:14px;flex:0 0 auto;">关闭</button>
             </div>
 
@@ -1165,10 +1559,12 @@ function openProfile() {
                     <div style="font-size:30px;font-weight:900;color:#f5d382;line-height:1;">${comments.length}</div>
                     <div style="opacity:.75;margin-top:10px;">发布评论</div>
                 </div>
+
                 <div style="padding:18px 20px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:rgba(255,255,255,.04);">
                     <div style="font-size:30px;font-weight:900;color:#f5d382;line-height:1;">${likes.length}</div>
                     <div style="opacity:.75;margin-top:10px;">点赞数</div>
                 </div>
+
                 <div style="padding:18px 20px;border:1px solid rgba(255,255,255,.12);border-radius:18px;background:rgba(255,255,255,.04);">
                     <div style="font-size:30px;font-weight:900;color:#f5d382;line-height:1;">${replies.length}</div>
                     <div style="opacity:.75;margin-top:10px;">收到回复</div>
@@ -1178,36 +1574,42 @@ function openProfile() {
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">
                 <section style="border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:18px;background:rgba(0,0,0,.18);min-height:130px;">
                     <h3 style="margin:0 0 14px;color:#f5d382;font-size:20px;">我的评论</h3>
-                    ${comments.length
-                      ? comments
-                          .map(
-                            (c) => `
-                        <div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.08);">
-                            <div style="font-weight:700;">${esc(c.city || '未选择城市')}</div>
-                            <div style="opacity:.9;margin:6px 0;line-height:1.7;">${esc(c.content || '')}</div>
-                            <div style="font-size:12px;opacity:.55;">${esc(c.time || '')}</div>
-                        </div>
-                    `
-                          )
-                          .join('')
-                      : `<div style="opacity:.62;line-height:1.8;">还没有发布评论。</div>`}
+                    ${
+                      comments.length
+                        ? comments
+                            .map(
+                              (c) => `
+                                <div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.08);">
+                                    <div style="font-weight:700;">${esc(c.city || c.city_name || '未选择城市')}</div>
+                                    <div style="opacity:.9;margin:6px 0;line-height:1.7;">${esc(c.content || '')}</div>
+                                    <div style="font-size:12px;opacity:.55;">${esc(
+                                      formatTime(c.time || c.created_at || '')
+                                    )} · 点赞 ${esc(c.likes ?? c.like_count ?? 0)}</div>
+                                </div>
+                            `
+                            )
+                            .join('')
+                        : `<div style="opacity:.62;line-height:1.8;">还没有发布评论。</div>`
+                    }
                 </section>
 
                 <section style="border:1px solid rgba(255,255,255,.12);border-radius:18px;padding:18px;background:rgba(0,0,0,.18);min-height:130px;">
                     <h3 style="margin:0 0 14px;color:#f5d382;font-size:20px;">别人回复我的评论</h3>
-                    ${replies.length
-                      ? replies
-                          .map(
-                            (r) => `
-                        <div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.08);">
-                            <div style="font-weight:700;">${esc(r.from || '用户')}</div>
-                            <div style="opacity:.9;margin:6px 0;line-height:1.7;">${esc(r.content || '')}</div>
-                            <div style="font-size:12px;opacity:.55;">${esc(r.time || '')}</div>
-                        </div>
-                    `
-                          )
-                          .join('')
-                      : `<div style="opacity:.62;line-height:1.8;">暂时没有收到回复。</div>`}
+                    ${
+                      replies.length
+                        ? replies
+                            .map(
+                              (r) => `
+                                <div style="padding:12px 0;border-bottom:1px solid rgba(255,255,255,.08);">
+                                    <div style="font-weight:700;">${esc(r.from || '用户')}</div>
+                                    <div style="opacity:.9;margin:6px 0;line-height:1.7;">${esc(r.content || '')}</div>
+                                    <div style="font-size:12px;opacity:.55;">${esc(formatTime(r.time || r.created_at || ''))}</div>
+                                </div>
+                            `
+                            )
+                            .join('')
+                        : `<div style="opacity:.62;line-height:1.8;">暂时没有收到回复。</div>`
+                    }
                 </section>
             </div>
 
@@ -1220,7 +1622,7 @@ function openProfile() {
 
 function logout() {
   currentUser = null;
-
+  saveCurrentUser();
   closeProfile();
   updateUIForLogin();
   toast('已退出登录');
@@ -1235,8 +1637,7 @@ function updateUIForLogin() {
   const regBtnD = document.getElementById('regBtnD');
   const profileBtnD = document.getElementById('profileBtnD');
 
-  const avatar = document.getElementById('profileAvatar');
-  const avatarD = document.getElementById('profileAvatarD');
+  const avatar = currentUser?.avatar_url || currentUser?.avatar || DEFAULT_AVATAR;
 
   if (currentUser) {
     [loginBtn, loginBtnD].forEach((b) => b && (b.style.display = 'none'));
@@ -1257,13 +1658,10 @@ function updateUIForLogin() {
         b.style.background = 'linear-gradient(135deg,#f6e58d,#e8b96b)';
         b.style.overflow = 'hidden';
         b.innerHTML =
-          `<img src="${esc(currentUser.avatar || DEFAULT_AVATAR)}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;display:block;"><span>个人主页</span>`;
+          `<img src="${esc(avatar)}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;display:block;"><span>个人主页</span>`;
         b.onclick = openProfile;
       }
     });
-
-    if (avatar) avatar.src = currentUser.avatar;
-    if (avatarD) avatarD.src = currentUser.avatar;
   } else {
     [loginBtn, loginBtnD].forEach((b) => b && (b.style.display = 'inline-block'));
     [regBtn, regBtnD].forEach((b) => b && (b.style.display = 'inline-block'));
@@ -1272,12 +1670,13 @@ function updateUIForLogin() {
 }
 
 // ================================
-// 9. 初始化
+// 13. 初始化
 // ================================
 function initPage() {
   injectBugFixStyles();
   bindCityGridClick();
   bindPickerClick();
+  loadUserFromStorage();
 
   const tagFilters = document.getElementById('tagFilters');
 
@@ -1313,16 +1712,6 @@ function initPage() {
   goHome();
 }
 
-function clearBaseCity() {
-  const baseCityInput = document.getElementById('baseCityInput');
-  const clearCityBtn = document.getElementById('clearCityBtn');
-
-  if (baseCityInput) baseCityInput.value = '';
-  if (clearCityBtn) clearCityBtn.style.display = 'none';
-
-  triggerSearch();
-}
-
 // ============================
 // 结构桥接层
 // ============================
@@ -1348,5 +1737,6 @@ window.logout = logout;
 window.postComment = postComment;
 window.switchSort = switchSort;
 window.changeAvatarFromFile = changeAvatarFromFile;
+window.likeComment = likeComment;
 
 window.addEventListener('DOMContentLoaded', initPage);
