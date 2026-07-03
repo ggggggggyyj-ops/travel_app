@@ -545,6 +545,440 @@ async function findUserByIdentifier(data) {
     return null;
 }
 
+
+/* =========================
+   数据字段兼容工具
+   只修复：数据库字段没被前端完整使用、搜索条件过严导致空结果
+========================= */
+function firstFilled(...values) {
+    for (const value of values) {
+        if (value !== undefined && value !== null && String(value).trim() !== '') {
+            return value;
+        }
+    }
+    return null;
+}
+
+function tryParseJSON(value) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string') return value;
+
+    try {
+        return JSON.parse(value);
+    } catch (e) {
+        return null;
+    }
+}
+
+function normalizeLongText(value) {
+    if (value === undefined || value === null) return '';
+
+    if (Array.isArray(value)) {
+        return value.map(item => normalizeLongText(item)).filter(Boolean).join('\n');
+    }
+
+    if (typeof value === 'object') {
+        return Object.values(value).map(item => normalizeLongText(item)).filter(Boolean).join('\n');
+    }
+
+    const parsed = tryParseJSON(value);
+
+    if (parsed && parsed !== value) {
+        return normalizeLongText(parsed);
+    }
+
+    return String(value)
+        .replace(/\\r\\n/g, '\n')
+        .replace(/\\n/g, '\n')
+        .replace(/\r\n/g, '\n')
+        .trim();
+}
+
+function splitTextList(value) {
+    if (value === undefined || value === null || value === '') return [];
+
+    const parsed = tryParseJSON(value);
+
+    if (Array.isArray(parsed)) {
+        return parsed.map(item => String(item).trim()).filter(Boolean);
+    }
+
+    if (Array.isArray(value)) {
+        return value.map(item => String(item).trim()).filter(Boolean);
+    }
+
+    return String(value)
+        .replace(/\\n/g, '\n')
+        .split(/[，、,;；\n]/)
+        .map(item => item.trim())
+        .filter(Boolean);
+}
+
+function numberFromText(value) {
+    if (value === undefined || value === null || value === '') return null;
+
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+    const text = String(value);
+    const match = text.match(/\d+(?:\.\d+)?/);
+
+    return match ? Number(match[0]) : null;
+}
+
+function parseDaysValue(value) {
+    if (value === undefined || value === null || value === '') return null;
+
+    if (typeof value === 'number' && Number.isFinite(value)) return value;
+
+    const text = String(value);
+    const dayMatch = text.match(/(\d+)\s*天/);
+
+    if (dayMatch) return Number(dayMatch[1]);
+
+    return numberFromText(text);
+}
+
+function normalizeCityRow(city) {
+    if (!city) return city;
+
+    city.detail_intro = firstFilled(
+        city.detail_intro,
+        city.detailIntro,
+        city.description,
+        city.desc,
+        city.content,
+        city.intro
+    );
+
+    city.food = firstFilled(
+        city.food,
+        city.foods,
+        city.food_tips,
+        city.food_recommend,
+        city.food_recommendation,
+        city.foods_recommendation
+    );
+
+    city.stay_tips = firstFilled(
+        city.stay_tips,
+        city.stay,
+        city.accommodation,
+        city.accommodation_tips,
+        city.hotel_tips,
+        city.hotel_recommend,
+        city.stay_recommend,
+        city.stay_recommendation
+    );
+
+    city.transport_tips = firstFilled(
+        city.transport_tips,
+        city.transport,
+        city.traffic,
+        city.traffic_tips,
+        city.transportation,
+        city.transportation_tips,
+        city.transport_recommend,
+        city.transport_recommendation
+    );
+
+    city.budgetPlans = firstFilled(
+        city.budgetPlans,
+        city.budget_plans,
+        city.budget_plan,
+        city.plans,
+        city.plan,
+        city.route_plan,
+        city.travel_plan,
+        city.itinerary,
+        city.schedule
+    );
+
+    city.tags = firstFilled(
+        city.tags,
+        city.type,
+        city.types,
+        city.travel_type,
+        city.travel_types,
+        city.tourism_type,
+        city.tourism_types,
+        city.category,
+        city.categories
+    );
+
+    city.score = firstFilled(city.score, city.rating, city.rate, city.recommend_score);
+    city.budget = firstFilled(city.budget, city.budget_max, city.avg_budget, city.average_budget, city.cost, city.price);
+    city.days_min = firstFilled(city.days_min, city.min_days, city.days);
+    city.days_max = firstFilled(city.days_max, city.max_days, city.days);
+
+    return city;
+}
+
+function normalizeCityRows(list) {
+    return Array.isArray(list) ? list.map(item => normalizeCityRow(item)) : [];
+}
+
+function mergeMissingCityFields(city, extra) {
+    if (!city || !extra) return city;
+
+    Object.keys(extra).forEach(key => {
+        if ((city[key] === undefined || city[key] === null || String(city[key]).trim() === '') && extra[key] !== undefined && extra[key] !== null && String(extra[key]).trim() !== '') {
+            city[key] = extra[key];
+        }
+    });
+
+    return normalizeCityRow(city);
+}
+
+async function enrichCityDetails(city) {
+    if (!city) return city;
+
+    const candidates = [
+        { table: 'city_details', cityIdField: 'city_id', cityNameField: 'city_name' },
+        { table: 'city_detail', cityIdField: 'city_id', cityNameField: 'city_name' },
+        { table: 'travel_city_details', cityIdField: 'city_id', cityNameField: 'city_name' },
+        { table: 'city_plans', cityIdField: 'city_id', cityNameField: 'city_name' }
+    ];
+
+    for (const item of candidates) {
+        try {
+            const [rows] = await db.query(
+                `SELECT * FROM \`${item.table}\` WHERE \`${item.cityIdField}\`=? OR \`${item.cityNameField}\`=? LIMIT 1`,
+                [city.id || 0, city.name || '']
+            );
+
+            if (rows && rows[0]) {
+                mergeMissingCityFields(city, rows[0]);
+            }
+        } catch (e) {}
+    }
+
+    return normalizeCityRow(city);
+}
+
+function citySearchText(city) {
+    return [
+        city.name,
+        city.province,
+        city.region,
+        city.highlights,
+        city.tags,
+        city.type,
+        city.types,
+        city.travel_type,
+        city.travel_types,
+        city.tourism_type,
+        city.tourism_types,
+        city.category,
+        city.categories,
+        city.intro,
+        city.detail_intro,
+        city.food,
+        city.stay_tips,
+        city.transport_tips,
+        city.budgetPlans
+    ].map(normalizeLongText).join(' ');
+}
+
+function getCityBudgetValue(city) {
+    const direct = numberFromText(firstFilled(city.budget, city.budget_max, city.avg_budget, city.average_budget, city.cost, city.price));
+
+    if (direct !== null) return direct;
+
+    const text = normalizeLongText(firstFilled(city.budgetPlans, city.budget_plans, city.budget_plan, city.plan, city.plans));
+    const nums = [...text.matchAll(/\d+/g)].map(item => Number(item[0])).filter(Number.isFinite);
+
+    return nums.length ? Math.min(...nums) : null;
+}
+
+function getCityDaysRange(city) {
+    const minDirect = parseDaysValue(firstFilled(city.days_min, city.min_days));
+    const maxDirect = parseDaysValue(firstFilled(city.days_max, city.max_days));
+    const daysDirect = parseDaysValue(city.days);
+
+    let min = minDirect;
+    let max = maxDirect;
+
+    if (min === null && max === null && daysDirect !== null) {
+        min = daysDirect;
+        max = daysDirect;
+    }
+
+    const text = normalizeLongText(firstFilled(city.days_text, city.duration, city.budgetPlans, city.budget_plans, city.budget_plan, city.plan, city.plans));
+    const nums = [...text.matchAll(/(\d+)\s*天/g)].map(item => Number(item[1])).filter(Number.isFinite);
+
+    if (nums.length) {
+        if (min === null) min = Math.min(...nums);
+        if (max === null) max = Math.max(...nums);
+    }
+
+    return { min, max };
+}
+
+function cityMatchesSearch(city, filters) {
+    const budgetLimit = numberFromText(filters.budget);
+    const daysTarget = parseDaysValue(filters.days);
+    const tags = String(filters.tags || '')
+        .split(',')
+        .map(item => item.trim())
+        .filter(Boolean);
+
+    if (budgetLimit) {
+        const cityBudget = getCityBudgetValue(city);
+        if (cityBudget !== null && cityBudget > budgetLimit) return false;
+    }
+
+    if (daysTarget) {
+        const range = getCityDaysRange(city);
+        if (range.min !== null && daysTarget < range.min) return false;
+        if (range.max !== null && daysTarget > range.max) return false;
+    }
+
+    if (tags.length) {
+        const text = citySearchText(city);
+        const ok = tags.every(tag => text.includes(tag));
+        if (!ok) return false;
+    }
+
+    return true;
+}
+
+async function getSearchCandidateCities(region) {
+    let sql = `SELECT * FROM cities WHERE 1=1`;
+    const params = [];
+
+    if (region !== 'all') {
+        sql += ` AND region=?`;
+        params.push(region);
+    }
+
+    sql += ` ORDER BY score DESC LIMIT 500`;
+
+    const [rows] = await db.query(sql, params);
+    return fillCityImages(normalizeCityRows(rows));
+}
+
+async function searchCitiesWithFilters(region, filters, origin) {
+    let list = await getSearchCandidateCities(region);
+
+    list = list.filter(city => cityMatchesSearch(city, filters));
+
+    if (origin && Number.isFinite(origin.lat) && Number.isFinite(origin.lng)) {
+        list = list
+            .map(city => {
+                const lat = Number(city.lat);
+                const lng = Number(city.lng);
+                const distance = Number.isFinite(lat) && Number.isFinite(lng)
+                    ? Math.round(6371 * 2 * Math.atan2(
+                        Math.sqrt(
+                            Math.sin(((lat - origin.lat) * Math.PI / 180) / 2) ** 2 +
+                            Math.cos(origin.lat * Math.PI / 180) *
+                            Math.cos(lat * Math.PI / 180) *
+                            Math.sin(((lng - origin.lng) * Math.PI / 180) / 2) ** 2
+                        ),
+                        Math.sqrt(1 - (
+                            Math.sin(((lat - origin.lat) * Math.PI / 180) / 2) ** 2 +
+                            Math.cos(origin.lat * Math.PI / 180) *
+                            Math.cos(lat * Math.PI / 180) *
+                            Math.sin(((lng - origin.lng) * Math.PI / 180) / 2) ** 2
+                        ))
+                    ))
+                    : 999999;
+
+                return { ...city, distance };
+            })
+            .filter(city => city.id !== origin.id && city.name !== origin.name)
+            .sort((a, b) => (a.distance - b.distance) || (Number(b.score || 0) - Number(a.score || 0)));
+    } else {
+        list = list.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    }
+
+    return list.slice(0, 30);
+}
+
+const tableColumnsCache = new Map();
+
+async function getTableColumns(tableName) {
+    if (!/^[a-zA-Z0-9_]+$/.test(tableName)) return [];
+
+    if (tableColumnsCache.has(tableName)) {
+        return tableColumnsCache.get(tableName);
+    }
+
+    try {
+        const [rows] = await db.query(`SHOW COLUMNS FROM \`${tableName}\``);
+        const cols = rows.map(row => row.Field);
+        tableColumnsCache.set(tableName, cols);
+        return cols;
+    } catch (e) {
+        tableColumnsCache.set(tableName, []);
+        return [];
+    }
+}
+
+function pickColumn(cols, names) {
+    return names.find(name => cols.includes(name));
+}
+
+async function readCommentsFromTable(tableName, cityName, cityId, sort) {
+    const cols = await getTableColumns(tableName);
+
+    if (!cols.length) return [];
+
+    const cityNameCol = pickColumn(cols, ['city_name', 'city', 'name']);
+    const cityIdCol = pickColumn(cols, ['city_id']);
+    const contentCol = pickColumn(cols, ['content', 'comment', 'text', 'body']);
+
+    if (!contentCol || (!cityNameCol && !cityIdCol)) return [];
+
+    const idCol = pickColumn(cols, ['id']) || 'id';
+    const userCol = pickColumn(cols, ['username', 'nickname', 'user_name', 'phone', 'author']);
+    const likeCol = pickColumn(cols, ['like_count', 'likes', 'liked_count']);
+    const timeCol = pickColumn(cols, ['created_at', 'time', 'createdAt', 'create_time', 'updated_at']);
+    const statusCol = pickColumn(cols, ['status']);
+
+    const selectList = [
+        `\`${idCol}\` AS id`,
+        cityNameCol ? `\`${cityNameCol}\` AS city_name` : `NULL AS city_name`,
+        userCol ? `\`${userCol}\` AS username` : `'游客' AS username`,
+        `\`${contentCol}\` AS content`,
+        likeCol ? `COALESCE(\`${likeCol}\`, 0) AS like_count` : `0 AS like_count`,
+        timeCol ? `\`${timeCol}\` AS created_at` : `NULL AS created_at`,
+        `'${tableName}' AS source`
+    ];
+
+    const where = [];
+    const params = [];
+
+    if (cityNameCol) {
+        where.push(`\`${cityNameCol}\`=?`);
+        params.push(cityName);
+    }
+
+    if (cityIdCol && cityId) {
+        where.push(`\`${cityIdCol}\`=?`);
+        params.push(cityId);
+    }
+
+    if (!where.length) return [];
+
+    let sql = `SELECT ${selectList.join(', ')} FROM \`${tableName}\` WHERE (${where.join(' OR ')})`;
+
+    if (statusCol) {
+        sql += ` AND (\`${statusCol}\`=1 OR \`${statusCol}\`='1' OR \`${statusCol}\`='active')`;
+    }
+
+    sql += sort === 'new'
+        ? ` ORDER BY ${timeCol ? `\`${timeCol}\`` : `\`${idCol}\``} DESC LIMIT 100`
+        : ` ORDER BY ${likeCol ? `\`${likeCol}\` DESC, ` : ''}${timeCol ? `\`${timeCol}\`` : `\`${idCol}\``} DESC LIMIT 100`;
+
+    try {
+        const [rows] = await db.query(sql, params);
+        return rows;
+    } catch (e) {
+        return [];
+    }
+}
+
 /* =========================
    图片代理
 ========================= */
@@ -640,83 +1074,45 @@ app.get('/api/search/keyword', (req, res) => {
     );
 });
 
-app.get('/api/search/filter', (req, res) => {
-    const region = normalizeRegion(req.query.region || 'all');
-    let sql = `SELECT * FROM cities WHERE 1=1`;
-    const params = [];
-
-    if (region !== 'all') {
-        sql += ` AND region=?`;
-        params.push(region);
-    }
-
-    if (req.query.budget) {
-        sql += ` AND budget <= ?`;
-        params.push(Number(req.query.budget));
-    }
-
-    if (req.query.days) {
-        sql += ` AND days_min <= ?`;
-        params.push(Number(req.query.days));
-    }
-
-    if (req.query.tags) {
-        const tags = String(req.query.tags).split(',').map(t => t.trim()).filter(Boolean);
-        tags.forEach(tag => {
-            sql += ` AND tags LIKE ?`;
-            params.push(`%${tag}%`);
+app.get('/api/search/filter', async (req, res) => {
+    try {
+        const region = normalizeRegion(req.query.region || 'all');
+        const data = await searchCitiesWithFilters(region, {
+            budget: req.query.budget,
+            days: req.query.days,
+            tags: req.query.tags
         });
+
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    sql += ` ORDER BY score DESC LIMIT 30`;
-
-    pool.query(sql, params, (err, data) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(fillCityImages(data));
-    });
 });
 
-app.get('/api/search/full', (req, res) => {
-    const region = normalizeRegion(req.query.region || 'all');
-    const lat = Number(req.query.lat);
-    const lng = Number(req.query.lng);
-    const hasLocation = Number.isFinite(lat) && Number.isFinite(lng);
+app.get('/api/search/full', async (req, res) => {
+    try {
+        const region = normalizeRegion(req.query.region || 'all');
+        const lat = Number(req.query.lat);
+        const lng = Number(req.query.lng);
+        const hasLocation = Number.isFinite(lat) && Number.isFinite(lng);
 
-    let sql = hasLocation
-        ? `SELECT *, (6371 * ACOS(COS(RADIANS(?)) * COS(RADIANS(lat)) * COS(RADIANS(lng) - RADIANS(?)) + SIN(RADIANS(?)) * SIN(RADIANS(lat)))) AS distance FROM cities WHERE 1=1`
-        : `SELECT * FROM cities WHERE 1=1`;
+        const origin = hasLocation ? {
+            id: req.query.city_id || req.query.cityId || null,
+            name: req.query.city || req.query.city_name || req.query.name || '',
+            lat,
+            lng
+        } : null;
 
-    const params = hasLocation ? [lat, lng, lat] : [];
+        const data = await searchCitiesWithFilters(region, {
+            budget: req.query.budget,
+            days: req.query.days,
+            tags: req.query.tags
+        }, origin);
 
-    if (region !== 'all') {
-        sql += ` AND region=?`;
-        params.push(region);
+        res.json(data);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
     }
-
-    if (req.query.budget) {
-        sql += ` AND budget <= ?`;
-        params.push(Number(req.query.budget));
-    }
-
-    if (req.query.days) {
-        sql += ` AND days_min <= ?`;
-        params.push(Number(req.query.days));
-    }
-
-    if (req.query.tags) {
-        const tags = String(req.query.tags).split(',').map(t => t.trim()).filter(Boolean);
-        tags.forEach(tag => {
-            sql += ` AND tags LIKE ?`;
-            params.push(`%${tag}%`);
-        });
-    }
-
-    sql += hasLocation ? ` ORDER BY distance ASC, score DESC LIMIT 30` : ` ORDER BY score DESC LIMIT 30`;
-
-    pool.query(sql, params, (err, data) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(fillCityImages(data));
-    });
 });
 
 app.get('/api/picker/list', (req, res) => {
@@ -744,15 +1140,32 @@ app.get('/api/picker/list', (req, res) => {
     });
 });
 
-app.get('/api/city', (req, res) => {
-    pool.query(
-        `SELECT * FROM cities WHERE name=?`,
-        [req.query.name],
-        (err, data) => {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json(fillCityImage(data[0] || null));
+app.get('/api/city', async (req, res) => {
+    try {
+        const name = String(req.query.name || '').trim();
+
+        if (!name) {
+            return res.json(null);
         }
-    );
+
+        const [rows] = await db.query(
+            `SELECT * FROM cities WHERE name=? LIMIT 1`,
+            [name]
+        );
+
+        let city = rows[0] || null;
+
+        if (!city) {
+            return res.json(null);
+        }
+
+        city = await enrichCityDetails(city);
+        city = fillCityImage(normalizeCityRow(city));
+
+        res.json(city);
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
 });
 
 /* =========================
@@ -994,34 +1407,45 @@ app.get('/api/comments', async (req, res) => {
             return res.json([]);
         }
 
-        const orderSql = sort === 'new'
-            ? `created_at DESC`
-            : `like_count DESC, created_at DESC`;
-
-        const [rows] = await db.query(
-            `SELECT * FROM (
-                SELECT id, city_name, username, content, COALESCE(likes, 0) AS like_count, created_at, 'travel_comments' AS source
-                FROM travel_comments
-                WHERE city_name=?
-                UNION ALL
-                SELECT uc.id, uc.city_name, COALESCE(u.nickname, u.phone) AS username, uc.content, COALESCE(uc.like_count, 0) AS like_count, uc.created_at, 'user_comments' AS source
-                FROM user_comments uc
-                LEFT JOIN users u ON uc.user_id=u.id
-                WHERE uc.city_name=? AND uc.status=1
-            ) AS all_comments
-            ORDER BY ${orderSql}`,
-            [city, city]
+        const [cityRows] = await db.query(
+            `SELECT id, name FROM cities WHERE name=? LIMIT 1`,
+            [city]
         );
+
+        const cityId = cityRows[0]?.id || null;
+
+        const commentGroups = await Promise.all([
+            readCommentsFromTable('travel_comments', city, cityId, sort),
+            readCommentsFromTable('user_comments', city, cityId, sort),
+            readCommentsFromTable('comments', city, cityId, sort),
+            readCommentsFromTable('city_comments', city, cityId, sort)
+        ]);
+
+        let rows = commentGroups.flat();
+
+        rows = rows
+            .filter(row => row && row.content)
+            .sort((a, b) => {
+                if (sort === 'new') {
+                    return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+                }
+
+                const likeDiff = Number(b.like_count || 0) - Number(a.like_count || 0);
+                if (likeDiff !== 0) return likeDiff;
+
+                return new Date(b.created_at || 0) - new Date(a.created_at || 0);
+            })
+            .slice(0, 100);
 
         res.json(rows.map(row => ({
             id: row.id,
-            city_name: row.city_name,
-            username: row.username,
+            city_name: row.city_name || city,
+            username: row.username || '游客',
             content: row.content,
-            likes: row.like_count,
-            like_count: row.like_count,
-            created_at: row.created_at,
-            source: row.source
+            likes: row.like_count || 0,
+            like_count: row.like_count || 0,
+            created_at: row.created_at || null,
+            source: row.source || ''
         })));
     } catch (err) {
         res.status(500).json({ error: err.message });
