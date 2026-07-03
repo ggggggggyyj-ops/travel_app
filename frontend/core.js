@@ -1004,23 +1004,31 @@ function getCityDaysLabel(c) {
 function renderMetricBadges(c) {
   if (mode !== 'filter' || !c) return '';
 
+  const filters = activeFilters || {};
   const items = [];
-  const distance = getNumber(c.distance);
 
-  if (distance != null && distance < 999999) {
-    items.push(`约${distance}km`);
+  if (filters.hasBaseCity) {
+    const distance = getNumber(c.distance);
+
+    if (distance != null && distance < 999999) {
+      items.push(`约${distance}km`);
+    }
   }
 
-  const budget = getCityBudget(c);
+  if (filters.hasBudget) {
+    const budget = getCityBudget(c);
 
-  if (budget != null) {
-    items.push(`预算约${budget}`);
+    if (budget != null) {
+      items.push(`预算约${budget}`);
+    }
   }
 
-  const daysLabel = getCityDaysLabel(c);
+  if (filters.hasDays) {
+    const daysLabel = getCityDaysLabel(c);
 
-  if (daysLabel) {
-    items.push(daysLabel);
+    if (daysLabel) {
+      items.push(`约${daysLabel}`);
+    }
   }
 
   if (!items.length) return '';
@@ -1109,26 +1117,95 @@ function bindCityGridClick() {
 // ================================
 // 8. 首页 / 搜索 / 地区
 // ================================
-async function triggerSearch() {
+function setHeaderRegionActive(region) {
+  document.querySelectorAll('#headerHome .tab').forEach((x) => {
+    x.classList.toggle('active', x.dataset.r === region);
+  });
+}
+
+function readSearchInputs() {
+  const baseCity = (document.getElementById('baseCityInput')?.value || '').trim();
+  const budgetRaw = (document.getElementById('budgetInput')?.value || '').trim();
+  const budget = getNumber(budgetRaw);
+  const days = document.getElementById('daysInput')?.value || '';
+  const selectedTags = [...document.querySelectorAll('.chip.active')]
+    .map((x) => x.textContent.trim())
+    .filter(Boolean);
+
+  return {
+    baseCity,
+    budget: budget || 0,
+    budgetRaw,
+    days,
+    selectedTags,
+    hasBaseCity: !!baseCity,
+    hasBudget: budget != null && budget > 0,
+    hasDays: !!parseDaysTarget(days),
+    hasTags: selectedTags.length > 0,
+  };
+}
+
+function hasSearchCondition(filters) {
+  return !!(filters && (filters.hasBaseCity || filters.hasBudget || filters.hasDays || filters.hasTags));
+}
+
+function attachDistanceToList(list, baseCityData) {
+  if (!Array.isArray(list) || !baseCityData) return Array.isArray(list) ? list : [];
+
+  const baseLat = Number(baseCityData.lat);
+  const baseLng = Number(baseCityData.lng);
+
+  if (!Number.isFinite(baseLat) || !Number.isFinite(baseLng)) return list;
+
+  return list
+    .map((c) => {
+      const lat = Number(c.lat);
+      const lng = Number(c.lng);
+      const distance = Number.isFinite(lat) && Number.isFinite(lng)
+        ? km(baseLat, baseLng, lat, lng)
+        : getNumber(c.distance) ?? 999999;
+
+      return { ...c, distance };
+    })
+    .filter((c) => c.name !== baseCityData.name)
+    .sort((a, b) => {
+      const distanceDiff = (getNumber(a.distance) ?? 999999) - (getNumber(b.distance) ?? 999999);
+      if (distanceDiff !== 0) return distanceDiff;
+
+      const filters = activeFilters || {};
+      if (filters.hasBudget) {
+        const budgetDiff = getBudgetDiff(a, filters.budget) - getBudgetDiff(b, filters.budget);
+        if (budgetDiff !== 0) return budgetDiff;
+      }
+
+      return Number(b.score || 0) - Number(a.score || 0);
+    });
+}
+
+async function triggerSearch(keepRegion = false) {
   showThinking();
 
   await delay(120);
 
   try {
-    const baseCity = (document.getElementById('baseCityInput')?.value || '').trim();
-    const budget = Number(document.getElementById('budgetInput')?.value || 0);
-    const days = document.getElementById('daysInput')?.value || '';
-    const selectedTags = [...document.querySelectorAll('.chip.active')]
-      .map((x) => x.textContent.trim())
-      .filter(Boolean);
+    const filters = readSearchInputs();
+
+    if (!keepRegion) {
+      currentRegion = 'all';
+      setHeaderRegionActive('all');
+    }
 
     mode = 'filter';
+    activeFilters = {
+      ...filters,
+      region: currentRegion,
+    };
 
     let data = [];
 
-    if (baseCity) {
+    if (filters.hasBaseCity) {
       const baseCityData = await fetchData(
-        `/api/city?name=${encodeURIComponent(baseCity)}`
+        `/api/city?name=${encodeURIComponent(filters.baseCity)}`
       );
 
       if (!baseCityData || Array.isArray(baseCityData)) {
@@ -1137,38 +1214,50 @@ async function triggerSearch() {
       }
 
       const params = new URLSearchParams({
-        city: baseCityData.name || baseCity,
+        city: baseCityData.name || filters.baseCity,
         city_id: baseCityData.id || '',
         lat: baseCityData.lat,
         lng: baseCityData.lng,
         region: currentRegion,
-        budget: budget,
-        days: days,
-        tags: selectedTags.join(','),
+        budget: filters.hasBudget ? filters.budget : '',
+        days: filters.hasDays ? filters.days : '',
+        tags: filters.selectedTags.join(','),
       });
 
       data = await fetchData(`/api/search/full?${params.toString()}`);
 
       if (!Array.isArray(data) || !data.length) {
-        data = await clientFallbackSearch({ baseCity, budget, days, selectedTags });
+        data = await clientFallbackSearch({
+          baseCity: filters.baseCity,
+          budget: filters.hasBudget ? filters.budget : '',
+          days: filters.hasDays ? filters.days : '',
+          selectedTags: filters.selectedTags,
+        });
       }
+
+      data = attachDistanceToList(Array.isArray(data) ? data : [], baseCityData);
 
       showList(getSearchTitle(), data, '距离最近');
     } else {
       const params = new URLSearchParams({
         region: currentRegion,
-        budget: budget,
-        days: days,
-        tags: selectedTags.join(','),
+        budget: filters.hasBudget ? filters.budget : '',
+        days: filters.hasDays ? filters.days : '',
+        tags: filters.selectedTags.join(','),
       });
 
       data = await fetchData(`/api/search/filter?${params.toString()}`);
 
       if (!Array.isArray(data) || !data.length) {
-        data = await clientFallbackSearch({ baseCity, budget, days, selectedTags });
+        data = await clientFallbackSearch({
+          baseCity: '',
+          budget: filters.hasBudget ? filters.budget : '',
+          days: filters.hasDays ? filters.days : '',
+          selectedTags: filters.selectedTags,
+        });
       }
 
-      showList(getSearchTitle(), data, '匹配成功');
+      showList(getSearchTitle(), Array.isArray(data) ? data : [], '匹配成功');
     }
 
     if (!Array.isArray(data) || !data.length) {
@@ -1184,6 +1273,7 @@ async function triggerSearch() {
 async function goHome() {
   mode = 'home';
   currentRegion = 'all';
+  activeFilters = null;
 
   const homeWrap = document.getElementById('homeWrap');
   const detail = document.getElementById('detail');
@@ -1195,9 +1285,7 @@ async function goHome() {
   if (headerHome) headerHome.style.display = 'flex';
   if (headerDetail) headerDetail.style.display = 'none';
 
-  document.querySelectorAll('#headerHome .tab').forEach((x) => {
-    x.classList.toggle('active', x.dataset.r === 'all');
-  });
+  setHeaderRegionActive('all');
 
   const data = await fetchData('/api/top30?region=all');
   const list = Array.isArray(data) ? data : [];
@@ -1217,7 +1305,7 @@ async function setRegion(r, el) {
   }
 
   if (mode === 'filter') {
-    await triggerSearch();
+    await triggerSearch(true);
     return;
   }
 
@@ -2308,7 +2396,7 @@ function initPage() {
   const searchBtn = document.getElementById('searchBtn');
 
   if (searchBtn) {
-    searchBtn.addEventListener('click', triggerSearch);
+    searchBtn.addEventListener('click', () => triggerSearch(false));
   }
 
   const commentText = document.getElementById('commentText');
