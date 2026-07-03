@@ -33,12 +33,51 @@ function readJson(filePath) {
   return Array.isArray(parsed) ? parsed : [parsed];
 }
 
+function formatMysqlDate(date) {
+  if (!(date instanceof Date) || Number.isNaN(date.getTime())) {
+    return null;
+  }
+
+  const pad = (n) => String(n).padStart(2, "0");
+
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join("-") + " " + [
+    pad(date.getHours()),
+    pad(date.getMinutes()),
+    pad(date.getSeconds())
+  ].join(":");
+}
+
 function normalizeValue(value) {
   if (value === undefined) return null;
   if (value === null) return null;
 
+  if (value instanceof Date) {
+    return formatMysqlDate(value);
+  }
+
+  if (typeof value === "string") {
+    const dotNetDateMatch = value.match(/^\/Date\((-?\d+)(?:[+-]\d+)?\)\/$/);
+    if (dotNetDateMatch) {
+      return formatMysqlDate(new Date(Number(dotNetDateMatch[1])));
+    }
+
+    const isoDateMatch = value.match(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+    if (isoDateMatch) {
+      return value.slice(0, 19).replace("T", " ");
+    }
+
+    return value;
+  }
+
   if (typeof value === "object") {
-    if (value instanceof Date) return value;
+    if (value.$date) {
+      return normalizeValue(value.$date);
+    }
+
     return JSON.stringify(value);
   }
 
@@ -58,7 +97,11 @@ async function truncateTables(conn) {
       await conn.query(`TRUNCATE TABLE \`${tableName}\``);
       console.log(`Truncated ${tableName}`);
     } catch (err) {
-      console.log(`Skip truncate ${tableName}: ${err.message}`);
+      if (err.code === "ER_NO_SUCH_TABLE") {
+        console.log(`Skip truncate ${tableName}: table does not exist`);
+      } else {
+        throw err;
+      }
     }
   }
 
