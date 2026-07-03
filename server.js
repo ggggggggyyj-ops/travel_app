@@ -644,6 +644,9 @@ function normalizeCityRow(city) {
     city.detail_intro = firstFilled(
         city.detail_intro,
         city.detailIntro,
+        city.detailintro,
+        city.city_intro,
+        city.long_intro,
         city.description,
         city.desc,
         city.content,
@@ -653,6 +656,8 @@ function normalizeCityRow(city) {
     city.food = firstFilled(
         city.food,
         city.foods,
+        city.foodTips,
+        city.foodRecommend,
         city.food_tips,
         city.food_recommend,
         city.food_recommendation,
@@ -661,6 +666,14 @@ function normalizeCityRow(city) {
 
     city.stay_tips = firstFilled(
         city.stay_tips,
+        city.stayTips,
+        city.staytips,
+        city.accommodationTips,
+        city.accommodationtips,
+        city.hotelTips,
+        city.hoteltips,
+        city.hotel,
+        city.hotels,
         city.stay,
         city.accommodation,
         city.accommodation_tips,
@@ -672,6 +685,12 @@ function normalizeCityRow(city) {
 
     city.transport_tips = firstFilled(
         city.transport_tips,
+        city.transportTips,
+        city.transporttips,
+        city.trafficTips,
+        city.traffictips,
+        city.transportationTips,
+        city.transportationtips,
         city.transport,
         city.traffic,
         city.traffic_tips,
@@ -683,6 +702,14 @@ function normalizeCityRow(city) {
 
     city.budgetPlans = firstFilled(
         city.budgetPlans,
+        city.budgetPlan,
+        city.budgetplans,
+        city.routePlan,
+        city.routeplan,
+        city.travelPlan,
+        city.travelplan,
+        city.budget_plan_json,
+        city.plans_json,
         city.budget_plans,
         city.budget_plan,
         city.plans,
@@ -736,7 +763,11 @@ async function enrichCityDetails(city) {
         { table: 'city_details', cityIdField: 'city_id', cityNameField: 'city_name' },
         { table: 'city_detail', cityIdField: 'city_id', cityNameField: 'city_name' },
         { table: 'travel_city_details', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'city_plans', cityIdField: 'city_id', cityNameField: 'city_name' }
+        { table: 'city_plans', cityIdField: 'city_id', cityNameField: 'city_name' },
+        { table: 'city_info', cityIdField: 'city_id', cityNameField: 'city_name' },
+        { table: 'city_infos', cityIdField: 'city_id', cityNameField: 'city_name' },
+        { table: 'travel_plans', cityIdField: 'city_id', cityNameField: 'city_name' },
+        { table: 'city_routes', cityIdField: 'city_id', cityNameField: 'city_name' }
     ];
 
     for (const item of candidates) {
@@ -976,6 +1007,7 @@ async function readCommentsFromTable(tableName, cityName, cityId, sort) {
     const likeCol = pickColumn(cols, ['like_count', 'likes', 'liked_count']);
     const timeCol = pickColumn(cols, ['created_at', 'time', 'createdAt', 'create_time', 'updated_at']);
     const statusCol = pickColumn(cols, ['status']);
+    const ratingCol = pickColumn(cols, ['rating', 'score', 'rate']);
 
     const selectList = [
         `\`${idCol}\` AS id`,
@@ -986,16 +1018,21 @@ async function readCommentsFromTable(tableName, cityName, cityId, sort) {
         avatarCol ? `\`${avatarCol}\` AS avatar_url` : `NULL AS avatar_url`,
         `\`${contentCol}\` AS content`,
         likeCol ? `COALESCE(\`${likeCol}\`, 0) AS like_count` : `0 AS like_count`,
+        ratingCol ? `\`${ratingCol}\` AS rating` : `NULL AS rating`,
         timeCol ? `\`${timeCol}\` AS created_at` : `NULL AS created_at`,
         `'${tableName}' AS source`
     ];
 
+    const cleanCity = String(cityName || '').replace(/[\s　]/g, '');
     const where = [];
     const params = [];
 
-    if (cityNameCol) {
-        where.push(`\`${cityNameCol}\`=?`);
-        params.push(cityName);
+    if (cityNameCol && cleanCity) {
+        where.push(`REPLACE(REPLACE(TRIM(\`${cityNameCol}\`),' ',''),'　','')=?`);
+        params.push(cleanCity);
+
+        where.push(`\`${cityNameCol}\` LIKE ?`);
+        params.push(`%${cityName}%`);
     }
 
     if (cityIdCol && cityId) {
@@ -1019,6 +1056,7 @@ async function readCommentsFromTable(tableName, cityName, cityId, sort) {
         const [rows] = await db.query(sql, params);
         return rows;
     } catch (e) {
+        console.error(`/api/comments 读取 ${tableName} 失败:`, e.message);
         return [];
     }
 }
@@ -1625,9 +1663,10 @@ app.get('/api/comments', async (req, res) => {
             return res.json([]);
         }
 
+        const cleanCity = city.replace(/[\s　]/g, '');
         const [cityRows] = await db.query(
-            `SELECT id, name FROM cities WHERE name=? LIMIT 1`,
-            [city]
+            `SELECT id, name FROM cities WHERE name=? OR REPLACE(REPLACE(TRIM(name),' ',''),'　','')=? OR name LIKE ? LIMIT 1`,
+            [city, cleanCity, `%${city}%`]
         );
 
         const cityId = cityRows[0]?.id || null;
@@ -1732,6 +1771,8 @@ app.post('/api/comments/like', async (req, res) => {
         const user = await findUserByIdentifier(req.body);
         const commentId = req.body.comment_id || req.body.commentId;
         const source = String(req.body.source || '').trim();
+        const hasClientState = typeof req.body.currently_liked === 'boolean';
+        const currentlyLiked = req.body.currently_liked === true;
 
         if (!user) {
             return res.status(401).json({ error: '请先登录' });
@@ -1741,28 +1782,72 @@ app.post('/api/comments/like', async (req, res) => {
             return res.status(400).json({ error: '缺少评论ID' });
         }
 
-        const [exists] = await db.query(
-            `SELECT id FROM comment_likes WHERE user_id=? AND comment_id=? LIMIT 1`,
-            [user.id, commentId]
-        );
+        const likeCols = await getTableColumns('comment_likes');
+        const hasSourceCol = likeCols.includes('source') || likeCols.includes('comment_source') || likeCols.includes('table_name');
+        const sourceCol = likeCols.includes('source') ? 'source' : (likeCols.includes('comment_source') ? 'comment_source' : (likeCols.includes('table_name') ? 'table_name' : null));
+
+        let exists = [];
+
+        try {
+            if (sourceCol && source) {
+                const [rows] = await db.query(
+                    `SELECT id FROM comment_likes WHERE user_id=? AND comment_id=? AND \`${sourceCol}\`=? LIMIT 1`,
+                    [user.id, commentId, source]
+                );
+                exists = rows;
+            } else {
+                const [rows] = await db.query(
+                    `SELECT id FROM comment_likes WHERE user_id=? AND comment_id=? LIMIT 1`,
+                    [user.id, commentId]
+                );
+                exists = rows;
+            }
+        } catch (e) {
+            exists = [];
+        }
 
         let liked;
         let delta;
 
-        if (exists.length) {
-            await db.query(
-                `DELETE FROM comment_likes WHERE user_id=? AND comment_id=?`,
-                [user.id, commentId]
-            );
+        if (hasClientState) {
+            liked = !currentlyLiked;
+            delta = liked ? 1 : -1;
+        } else if (exists.length) {
             liked = false;
             delta = -1;
         } else {
-            await db.query(
-                `INSERT INTO comment_likes (user_id, comment_id) VALUES (?, ?)`,
-                [user.id, commentId]
-            );
             liked = true;
             delta = 1;
+        }
+
+        try {
+            if (!liked) {
+                if (sourceCol && source) {
+                    await db.query(
+                        `DELETE FROM comment_likes WHERE user_id=? AND comment_id=? AND \`${sourceCol}\`=?`,
+                        [user.id, commentId, source]
+                    );
+                } else {
+                    await db.query(
+                        `DELETE FROM comment_likes WHERE user_id=? AND comment_id=?`,
+                        [user.id, commentId]
+                    );
+                }
+            } else if (!exists.length) {
+                if (sourceCol && source) {
+                    await db.query(
+                        `INSERT INTO comment_likes (user_id, comment_id, \`${sourceCol}\`) VALUES (?, ?, ?)`,
+                        [user.id, commentId, source]
+                    );
+                } else {
+                    await db.query(
+                        `INSERT INTO comment_likes (user_id, comment_id) VALUES (?, ?)`,
+                        [user.id, commentId]
+                    );
+                }
+            }
+        } catch (e) {
+            // 兼容历史表外键只指向 user_comments 的情况：仍更新原评论表点赞数，前端立即显示状态。
         }
 
         await adjustCommentLikeCount(commentId, source, delta);
@@ -1797,6 +1882,8 @@ app.post('/api/comments/reply', async (req, res) => {
         const fromCol = pickColumn(cols, ['from_user_id', 'user_id', 'uid']);
         const toCol = pickColumn(cols, ['to_user_id']);
         const contentCol = pickColumn(cols, ['content', 'reply', 'text', 'body']);
+        const sourceCol = pickColumn(cols, ['source', 'comment_source', 'table_name']);
+        const source = String(req.body.source || '').trim();
 
         if (!commentIdCol || !fromCol || !contentCol) {
             return res.status(500).json({ error: '评论回复表字段不完整' });
@@ -1823,6 +1910,11 @@ app.post('/api/comments/reply', async (req, res) => {
         if (parentCol && parentReplyId) {
             insertCols.push(parentCol);
             values.push(parentReplyId);
+        }
+
+        if (sourceCol && source) {
+            insertCols.push(sourceCol);
+            values.push(source);
         }
 
         const placeholders = insertCols.map(() => '?').join(', ');

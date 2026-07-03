@@ -526,6 +526,48 @@ function injectBugFixStyles() {
             color: transparent !important;
         }
 
+
+
+        .comment-form textarea {
+            display: none !important;
+        }
+
+        .comment-form.editing textarea {
+            display: block !important;
+        }
+
+        .emoji-like-btn {
+            font-size: 18px;
+            user-select: none;
+        }
+
+        .emoji-like-btn:disabled,
+        .reply-action-btn:disabled {
+            opacity: .55;
+            cursor: default;
+        }
+
+        #profileBtn,
+        #profileBtnD {
+            width: 50px !important;
+            height: 50px !important;
+            min-width: 50px !important;
+            padding: 0 !important;
+            border-radius: 50% !important;
+            overflow: hidden !important;
+            background: transparent !important;
+            border: 2px solid rgba(245,211,130,.75) !important;
+            box-shadow: 0 8px 22px rgba(0,0,0,.32) !important;
+        }
+
+        #profileBtn img,
+        #profileBtnD img {
+            width: 100% !important;
+            height: 100% !important;
+            object-fit: cover !important;
+            display: block !important;
+        }
+
         @keyframes thinkingSpin {
             to {
                 transform: rotate(360deg);
@@ -1294,6 +1336,7 @@ async function openDetail(n) {
   if (!c.budget) c.budget = 1500;
 
   currentCity = c;
+  resetCommentEditor();
 
   const headerHome = document.getElementById('headerHome');
   const headerDetail = document.getElementById('headerDetail');
@@ -1428,6 +1471,21 @@ function backToList() {
 // ================================
 // 11. 评论系统
 // ================================
+
+function resetCommentEditor() {
+  const textEl = document.getElementById('commentText');
+  const form = textEl?.closest('.comment-form');
+  const btn = form?.querySelector('button');
+
+  if (textEl) textEl.value = '';
+  if (form) form.classList.remove('editing');
+  if (btn) btn.textContent = '发布评价';
+}
+
+function commentDomKey(commentId, source = '') {
+  return `${String(source || 'comment').replace(/[^a-zA-Z0-9_-]/g, '_')}-${String(commentId || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+}
+
 function currentUserQuery() {
   if (!currentUser) return '';
 
@@ -1450,7 +1508,7 @@ function buildReplyTree(replies) {
   const byParent = {};
 
   list.forEach((reply) => {
-    const parent = reply.parent_reply_id || reply.parent_id || '';
+    const parent = String(reply.parent_reply_id || reply.parent_id || '');
 
     if (!byParent[parent]) byParent[parent] = [];
     byParent[parent].push(reply);
@@ -1461,9 +1519,11 @@ function buildReplyTree(replies) {
 
 function renderReplyList(comment, parentKey = '') {
   const byParent = buildReplyTree(comment.replies || []);
+  const source = comment.source || '';
+  const domKey = commentDomKey(comment.id, source);
 
   function renderLevel(key) {
-    const replies = byParent[key] || [];
+    const replies = byParent[String(key || '')] || [];
 
     if (!replies.length) return '';
 
@@ -1471,13 +1531,15 @@ function renderReplyList(comment, parentKey = '') {
       <div class="reply-list">
         ${replies.map((reply) => {
           const replyId = reply.id || '';
+          const replyKey = String(replyId || '');
+          const replyDomKey = `${domKey}-${String(replyId || '').replace(/[^a-zA-Z0-9_-]/g, '_')}`;
           const fromName = reply.from_username || reply.username || reply.from || '用户';
           const toName = reply.to_username || reply.to || '';
           const fromAvatar = normalizeImageUrl(reply.from_avatar || reply.avatar_url || reply.avatar || DEFAULT_AVATAR);
           const time = formatTime(reply.created_at || reply.time || '');
 
           return `
-            <div class="reply-item" id="reply-${esc(replyId)}">
+            <div class="reply-item" id="reply-${esc(replyDomKey)}">
               <div class="comment-head-row">
                 <img class="comment-avatar-img" src="${esc(fromAvatar)}">
                 <div class="comment-user-line">
@@ -1487,10 +1549,10 @@ function renderReplyList(comment, parentKey = '') {
               </div>
               <p>${esc(reply.content || '')}</p>
               <div class="comment-actions-row">
-                <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, ${jsArg(replyId)}, ${jsArg(reply.from_user_id || reply.user_id || '')})">回复</button>
+                <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, ${jsArg(replyId)}, ${jsArg(reply.from_user_id || reply.user_id || '')}, ${jsArg(source)})">回复</button>
               </div>
-              <div id="replyBox-${esc(comment.id)}-${esc(replyId)}"></div>
-              ${renderLevel(String(replyId))}
+              <div id="replyBox-${esc(replyDomKey)}"></div>
+              ${renderLevel(replyKey)}
             </div>
           `;
         }).join('')}
@@ -1501,13 +1563,15 @@ function renderReplyList(comment, parentKey = '') {
   return renderLevel(parentKey);
 }
 
-function toggleReplyBox(commentId, parentReplyId = '', toUserId = '') {
+function toggleReplyBox(commentId, parentReplyId = '', toUserId = '', source = '') {
   if (!currentUser) {
     openLogin('login');
     return;
   }
 
-  const boxId = `replyBox-${commentId}-${parentReplyId || ''}`;
+  const boxId = parentReplyId
+    ? `replyBox-${commentDomKey(commentId, source)}-${String(parentReplyId).replace(/[^a-zA-Z0-9_-]/g, '_')}`
+    : `replyBox-${commentDomKey(commentId, source)}`;
   const box = document.getElementById(boxId);
 
   if (!box) return;
@@ -1517,26 +1581,28 @@ function toggleReplyBox(commentId, parentReplyId = '', toUserId = '') {
     return;
   }
 
+  const inputId = `replyInput-${boxId}`;
+
   box.innerHTML = `
     <div class="reply-editor">
-      <input id="replyInput-${esc(commentId)}-${esc(parentReplyId || '')}" placeholder="写下回复...">
-      <button onclick="postReply(${jsArg(commentId)}, ${jsArg(parentReplyId || '')}, ${jsArg(toUserId || '')})">回复</button>
+      <input id="${esc(inputId)}" placeholder="写下回复...">
+      <button onclick="postReply(${jsArg(commentId)}, ${jsArg(parentReplyId || '')}, ${jsArg(toUserId || '')}, ${jsArg(source)}, ${jsArg(inputId)})">发送回复</button>
     </div>
   `;
 
   setTimeout(() => {
-    const input = document.getElementById(`replyInput-${commentId}-${parentReplyId || ''}`);
+    const input = document.getElementById(inputId);
     if (input) input.focus();
   }, 0);
 }
 
-async function postReply(commentId, parentReplyId = '', toUserId = '') {
+async function postReply(commentId, parentReplyId = '', toUserId = '', source = '', inputId = '') {
   if (!currentUser) {
     openLogin('login');
     return;
   }
 
-  const input = document.getElementById(`replyInput-${commentId}-${parentReplyId || ''}`);
+  const input = document.getElementById(inputId || `replyInput-replyBox-${commentDomKey(commentId, source)}`);
   const content = (input?.value || '').trim();
 
   if (!content) {
@@ -1550,15 +1616,24 @@ async function postReply(commentId, parentReplyId = '', toUserId = '') {
     comment_id: commentId,
     parent_reply_id: parentReplyId || null,
     to_user_id: toUserId || null,
+    source,
     content
   });
 
   if (result && result.ok) {
     toast('回复成功');
-    loadComments(currentCity.name, currentCommentSort);
+    await loadComments(currentCity.name, currentCommentSort);
   } else {
     toast(result?.error || '回复失败');
   }
+}
+
+function resetCommentScroll() {
+  const container = document.getElementById('commentList');
+  const commentsPanel = container?.closest('.comments');
+
+  if (container) container.scrollTop = 0;
+  if (commentsPanel) commentsPanel.scrollTop = 0;
 }
 
 async function loadComments(cityName, sortType = 'hot') {
@@ -1582,9 +1657,11 @@ async function loadComments(cityName, sortType = 'hot') {
           const avatar = commentAvatar(comment);
           const userName = comment.username || comment.nickname || comment.phone || '游客';
           const userId = comment.user_id || '';
+          const source = comment.source || '';
+          const domKey = commentDomKey(comment.id, source);
 
           return `
-                <div class="comment-item" id="comment-${esc(comment.id)}">
+                <div class="comment-item" id="comment-${esc(domKey)}">
                     <div class="comment-head-row">
                         <img class="comment-avatar-img" src="${esc(avatar)}">
                         <div class="comment-user-line">
@@ -1594,19 +1671,22 @@ async function loadComments(cityName, sortType = 'hot') {
                     </div>
                     <p>${esc(comment.content || '')}</p>
                     <div class="comment-actions-row">
-                        <button class="emoji-like-btn ${liked ? 'liked' : ''}" onclick="likeComment(${jsArg(comment.id)}, ${jsArg(comment.source || '')})"><span class="thumb">👍</span><span>${esc(likes)}</span></button>
-                        <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, '', ${jsArg(userId)})">回复</button>
+                        <button class="emoji-like-btn ${liked ? 'liked' : ''}" onclick="likeComment(${jsArg(comment.id)}, ${jsArg(source)}, this)"><span class="thumb">👍</span><span class="like-count">${esc(likes)}</span></button>
+                        <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, '', ${jsArg(userId)}, ${jsArg(source)})">回复</button>
                     </div>
-                    <div id="replyBox-${esc(comment.id)}-"></div>
+                    <div id="replyBox-${esc(domKey)}"></div>
                     ${renderReplyList(comment, '')}
                 </div>
             `;
         })
         .join('')
     : `<div class="comment-item"><p>暂无评论</p></div>`;
+
+  resetCommentScroll();
+  requestAnimationFrame(resetCommentScroll);
 }
 
-function switchSort(sortType, btn) {
+async function switchSort(sortType, btn) {
   document.querySelectorAll('.sorts button').forEach((b) =>
     b.classList.remove('active')
   );
@@ -1616,7 +1696,8 @@ function switchSort(sortType, btn) {
   }
 
   if (currentCity && currentCity.name) {
-    loadComments(currentCity.name, sortType);
+    await loadComments(currentCity.name, sortType);
+    resetCommentScroll();
   }
 }
 
@@ -1627,6 +1708,16 @@ async function postComment() {
   }
 
   const textEl = document.getElementById('commentText');
+  const form = textEl?.closest('.comment-form');
+  const btn = form?.querySelector('button');
+
+  if (form && !form.classList.contains('editing')) {
+    form.classList.add('editing');
+    if (btn) btn.textContent = '发送评价';
+    setTimeout(() => textEl && textEl.focus(), 0);
+    return;
+  }
+
   const content = (textEl?.value || '').trim();
 
   if (!content) {
@@ -1642,15 +1733,15 @@ async function postComment() {
   });
 
   if (result && result.ok) {
-    if (textEl) textEl.value = '';
+    resetCommentEditor();
     toast('评论发布成功');
-    loadComments(currentCity.name, 'new');
+    await loadComments(currentCity.name, 'new');
   } else {
     toast(result?.error || '评论发布失败');
   }
 }
 
-async function likeComment(commentId, source = '') {
+async function likeComment(commentId, source = '', btn = null) {
   if (!currentUser) {
     openLogin('login');
     return;
@@ -1658,21 +1749,47 @@ async function likeComment(commentId, source = '') {
 
   if (!commentId) return;
 
+  const targetBtn = btn || window.event?.currentTarget || null;
+  const wasLiked = Boolean(targetBtn?.classList.contains('liked'));
+
+  if (targetBtn) {
+    targetBtn.disabled = true;
+  }
+
   const result = await postJSON('/api/comments/like', {
     user_id: currentUser.id,
     phone: currentUser.phone,
     comment_id: commentId,
-    source
+    source,
+    currently_liked: wasLiked
   });
 
   if (result && result.ok) {
-    loadComments(currentCity.name, currentCommentSort);
+    const liked = Boolean(result.liked);
+    const countEl = targetBtn?.querySelector('.like-count');
+    const oldCount = Number(countEl?.textContent || 0);
+    const nextCount = Number.isFinite(Number(result.like_count))
+      ? Number(result.like_count)
+      : Math.max(0, oldCount + (liked ? 1 : -1));
+
+    if (targetBtn) {
+      targetBtn.classList.toggle('liked', liked);
+    }
+
+    if (countEl) {
+      countEl.textContent = String(nextCount);
+    }
   } else {
     toast(result?.error || '点赞失败');
+  }
+
+  if (targetBtn) {
+    targetBtn.disabled = false;
   }
 }
 
 // ================================
+// 12. 登录系统// ================================
 // 12. 登录系统
 // ================================
 function loadUserFromStorage() {
@@ -1961,19 +2078,19 @@ function updateUIForLogin() {
     [profileBtn, profileBtnD].forEach((b) => {
       if (b) {
         b.style.display = 'inline-flex';
-        b.style.width = 'auto';
-        b.style.height = '46px';
-        b.style.borderRadius = '999px';
-        b.style.padding = '6px 18px 6px 8px';
+        b.style.width = '50px';
+        b.style.height = '50px';
+        b.style.minWidth = '50px';
+        b.style.borderRadius = '50%';
+        b.style.padding = '0';
         b.style.alignItems = 'center';
         b.style.justifyContent = 'center';
-        b.style.gap = '8px';
-        b.style.color = '#111';
-        b.style.fontWeight = '800';
-        b.style.background = 'linear-gradient(135deg,#f6e58d,#e8b96b)';
+        b.style.background = 'transparent';
+        b.style.border = '2px solid rgba(245,211,130,.75)';
         b.style.overflow = 'hidden';
+        b.style.boxShadow = '0 8px 22px rgba(0,0,0,.32)';
         b.innerHTML =
-          `<img src="${esc(avatar)}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;display:block;"><span>个人主页</span>`;
+          `<img src="${esc(avatar)}" style="width:100%;height:100%;border-radius:50%;object-fit:cover;display:block;">`;
         b.onclick = openProfile;
       }
     });
@@ -1985,6 +2102,7 @@ function updateUIForLogin() {
 }
 
 // ================================
+// 13. 初始化// ================================
 // 13. 初始化
 // ================================
 function initPage() {
