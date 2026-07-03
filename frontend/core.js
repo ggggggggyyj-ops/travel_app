@@ -231,6 +231,29 @@ function getBudgetDiff(c, budget) {
   return Math.abs(cityBudget - target);
 }
 
+function getDaysDiff(c, days) {
+  const target = parseDaysTarget(days);
+
+  if (!target) return 999999;
+
+  const min = getCityDaysMin(c);
+  const max = getCityDaysMax(c);
+
+  if (min == null && max == null) return 999999;
+
+  if (target >= 4) {
+    if ((max != null && max >= 4) || (min != null && min >= 4)) return 0;
+    return Math.abs(4 - Number(max ?? min ?? 0));
+  }
+
+  if (min != null && max != null) {
+    if (min <= target && target <= max) return 0;
+    return Math.min(Math.abs(min - target), Math.abs(max - target));
+  }
+
+  return Math.abs(Number(min ?? max ?? 0) - target);
+}
+
 function getCurrentMonthLabel() {
   const monthMap = [
     '1月',
@@ -756,6 +779,18 @@ function getCityBudget(c) {
   return nums.length ? Math.min(...nums) : null;
 }
 
+function estimateDaysByBudgetClient(c) {
+  const budget = getCityBudget(c);
+
+  if (budget == null) return null;
+
+  if (budget <= 1200) return 1;
+  if (budget <= 2600) return 2;
+  if (budget <= 4200) return 3;
+
+  return 4;
+}
+
 function getCityDaysMin(c) {
   const direct = getNumber(c.days_min ?? c.min_days ?? c.days);
 
@@ -768,7 +803,9 @@ function getCityDaysMin(c) {
     .map((m) => Number(m[1]))
     .filter(Number.isFinite);
 
-  return nums.length ? Math.min(...nums) : null;
+  if (nums.length) return Math.min(...nums);
+
+  return estimateDaysByBudgetClient(c);
 }
 
 function getCityDaysMax(c) {
@@ -783,7 +820,9 @@ function getCityDaysMax(c) {
     .map((m) => Number(m[1]))
     .filter(Number.isFinite);
 
-  return nums.length ? Math.max(...nums) : null;
+  if (nums.length) return Math.max(...nums);
+
+  return estimateDaysByBudgetClient(c) == null ? null : 4;
 }
 
 function getCityTypeText(c) {
@@ -866,7 +905,7 @@ async function getAllCitiesForSearch(region = 'all') {
       ? 'abroad'
       : key;
   const pickerList = await fetchData(
-    `/api/picker/list?region=${encodeURIComponent(pickerRegionValue)}`
+    `/api/picker/list?region=${encodeURIComponent(pickerRegionValue)}&limit=1000`
   );
   const names = Array.isArray(pickerList)
     ? pickerList.map((c) => c.name).filter(Boolean)
@@ -875,7 +914,7 @@ async function getAllCitiesForSearch(region = 'all') {
   let list = [];
 
   if (names.length) {
-    const chunks = names.slice(0, 300);
+    const chunks = names.slice(0, 1000);
     list = await Promise.all(
       chunks.map((name) => fetchData(`/api/city?name=${encodeURIComponent(name)}`))
     );
@@ -926,10 +965,24 @@ async function clientFallbackSearch({ baseCity, budget, days, selectedTags }) {
             return { ...c, distance };
           })
           .filter((c) => c.name !== baseCityData.name)
-          .sort(
-            (a, b) =>
-              a.distance - b.distance || Number(b.score || 0) - Number(a.score || 0)
-          );
+          .sort((a, b) => {
+            const distanceDiff = a.distance - b.distance;
+            if (distanceDiff !== 0) return distanceDiff;
+
+            const targetBudget = getNumber(budget);
+            if (targetBudget) {
+              const budgetDiff = getBudgetDiff(a, targetBudget) - getBudgetDiff(b, targetBudget);
+              if (budgetDiff !== 0) return budgetDiff;
+            }
+
+            const targetDays = parseDaysTarget(days);
+            if (targetDays) {
+              const daysDiff = getDaysDiff(a, days) - getDaysDiff(b, days);
+              if (daysDiff !== 0) return daysDiff;
+            }
+
+            return Number(b.score || 0) - Number(a.score || 0);
+          });
       }
     }
   } else {
@@ -938,6 +991,12 @@ async function clientFallbackSearch({ baseCity, budget, days, selectedTags }) {
       if (targetBudget) {
         const diff = getBudgetDiff(a, targetBudget) - getBudgetDiff(b, targetBudget);
         if (diff !== 0) return diff;
+      }
+
+      const targetDays = parseDaysTarget(days);
+      if (targetDays) {
+        const daysDiff = getDaysDiff(a, days) - getDaysDiff(b, days);
+        if (daysDiff !== 0) return daysDiff;
       }
 
       return Number(b.score || 0) - Number(a.score || 0);
@@ -994,11 +1053,20 @@ function getCityDaysLabel(c) {
 
   if (min != null && max != null) {
     if (min === max) return `${min}天`;
+    if (max >= 4) return `${min}天起`;
     return `${min}-${max}天`;
   }
 
   if (min != null) return `${min}天起`;
   return `${max}天内`;
+}
+
+function getSelectedDaysBadgeLabel(filters) {
+  const target = parseDaysTarget(filters?.days);
+
+  if (!target) return '';
+
+  return `${target}天起`;
 }
 
 function renderMetricBadges(c) {
@@ -1019,15 +1087,17 @@ function renderMetricBadges(c) {
     const budget = getCityBudget(c);
 
     if (budget != null) {
-      items.push(`预算约${budget}`);
+      items.push(`约${budget}起`);
+    } else if (filters.budget) {
+      items.push(`约${filters.budget}起`);
     }
   }
 
   if (filters.hasDays) {
-    const daysLabel = getCityDaysLabel(c);
+    const daysLabel = getSelectedDaysBadgeLabel(filters) || getCityDaysLabel(c);
 
     if (daysLabel) {
-      items.push(`约${daysLabel}`);
+      items.push(daysLabel);
     }
   }
 
@@ -1176,6 +1246,11 @@ function attachDistanceToList(list, baseCityData) {
       if (filters.hasBudget) {
         const budgetDiff = getBudgetDiff(a, filters.budget) - getBudgetDiff(b, filters.budget);
         if (budgetDiff !== 0) return budgetDiff;
+      }
+
+      if (filters.hasDays) {
+        const daysDiff = getDaysDiff(a, filters.days) - getDaysDiff(b, filters.days);
+        if (daysDiff !== 0) return daysDiff;
       }
 
       return Number(b.score || 0) - Number(a.score || 0);

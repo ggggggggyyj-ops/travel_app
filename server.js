@@ -829,6 +829,39 @@ function getCityBudgetDiffValue(city, budgetLimit) {
     return Math.abs(cityBudget - budgetLimit);
 }
 
+function getCityDaysDiffValue(city, daysTarget) {
+    if (!daysTarget) return 999999;
+
+    const range = getCityDaysRange(city);
+
+    if (range.min === null && range.max === null) return 999999;
+
+    if (daysTarget >= 4) {
+        if (range.max !== null && range.max >= 4) return 0;
+        if (range.min !== null && range.min >= 4) return 0;
+        return Math.abs(4 - Number(range.max || range.min || 0));
+    }
+
+    if (range.min !== null && range.max !== null) {
+        if (range.min <= daysTarget && daysTarget <= range.max) return 0;
+        return Math.min(Math.abs(range.min - daysTarget), Math.abs(range.max - daysTarget));
+    }
+
+    return Math.abs(Number(range.min || range.max || 0) - daysTarget);
+}
+
+function estimateDaysByBudget(city) {
+    const budget = getCityBudgetValue(city);
+
+    if (budget === null) return null;
+
+    if (budget <= 1200) return 1;
+    if (budget <= 2600) return 2;
+    if (budget <= 4200) return 3;
+
+    return 4;
+}
+
 function getCityDaysRange(city) {
     const minDirect = parseDaysValue(firstFilled(city.days_min, city.min_days));
     const maxDirect = parseDaysValue(firstFilled(city.days_max, city.max_days));
@@ -836,6 +869,7 @@ function getCityDaysRange(city) {
 
     let min = minDirect;
     let max = maxDirect;
+    let inferred = false;
 
     if (min === null && max === null && daysDirect !== null) {
         min = daysDirect;
@@ -850,7 +884,17 @@ function getCityDaysRange(city) {
         if (max === null) max = Math.max(...nums);
     }
 
-    return { min, max };
+    if (min === null && max === null) {
+        const estimated = estimateDaysByBudget(city);
+
+        if (estimated !== null) {
+            min = estimated;
+            max = 4;
+            inferred = true;
+        }
+    }
+
+    return { min, max, inferred };
 }
 
 function cityMatchesSearch(city, filters) {
@@ -903,7 +947,7 @@ async function getSearchCandidateCities(region) {
         params.push(region);
     }
 
-    sql += ` ORDER BY score DESC LIMIT 500`;
+    sql += ` ORDER BY score DESC LIMIT 1000`;
 
     const [rows] = await db.query(sql, params);
     return fillCityImages(normalizeCityRows(rows));
@@ -912,6 +956,7 @@ async function getSearchCandidateCities(region) {
 async function searchCitiesWithFilters(region, filters, origin) {
     let list = await getSearchCandidateCities(region);
     const budgetLimit = numberFromText(filters.budget);
+    const daysTarget = parseDaysValue(filters.days);
 
     list = list.filter(city => cityMatchesSearch(city, filters));
 
@@ -954,6 +999,11 @@ async function searchCitiesWithFilters(region, filters, origin) {
                     if (budgetDiff !== 0) return budgetDiff;
                 }
 
+                if (daysTarget) {
+                    const daysDiff = getCityDaysDiffValue(a, daysTarget) - getCityDaysDiffValue(b, daysTarget);
+                    if (daysDiff !== 0) return daysDiff;
+                }
+
                 return Number(b.score || 0) - Number(a.score || 0);
             });
     } else {
@@ -961,6 +1011,11 @@ async function searchCitiesWithFilters(region, filters, origin) {
             if (budgetLimit) {
                 const budgetDiff = getCityBudgetDiffValue(a, budgetLimit) - getCityBudgetDiffValue(b, budgetLimit);
                 if (budgetDiff !== 0) return budgetDiff;
+            }
+
+            if (daysTarget) {
+                const daysDiff = getCityDaysDiffValue(a, daysTarget) - getCityDaysDiffValue(b, daysTarget);
+                if (daysDiff !== 0) return daysDiff;
             }
 
             return Number(b.score || 0) - Number(a.score || 0);
@@ -1392,7 +1447,9 @@ app.get('/api/picker/list', (req, res) => {
         params.push(`%${keyword}%`, `%${keyword}%`);
     }
 
-    sql += ` ORDER BY pinyin ASC, name ASC LIMIT 300`;
+    const limit = Math.min(Math.max(Number(req.query.limit || 1000), 1), 1000);
+
+    sql += ` ORDER BY pinyin ASC, name ASC LIMIT ${limit}`;
 
     pool.query(sql, params, (err, data) => {
         if (err) return res.status(500).json({ error: err.message });
