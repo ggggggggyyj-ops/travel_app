@@ -650,6 +650,9 @@ function normalizeCityRow(city) {
         city.description,
         city.desc,
         city.content,
+        city.detail,
+        city.details,
+        city.city_detail,
         city.intro
     );
 
@@ -661,7 +664,10 @@ function normalizeCityRow(city) {
         city.food_tips,
         city.food_recommend,
         city.food_recommendation,
-        city.foods_recommendation
+        city.foods_recommendation,
+        city.food_list,
+        city.food_detail,
+        city.food_desc
     );
 
     city.stay_tips = firstFilled(
@@ -680,7 +686,12 @@ function normalizeCityRow(city) {
         city.hotel_tips,
         city.hotel_recommend,
         city.stay_recommend,
-        city.stay_recommendation
+        city.stay_recommendation,
+        city.stay_detail,
+        city.hotel_detail,
+        city.accommodation_detail,
+        city.lodging,
+        city.lodging_tips
     );
 
     city.transport_tips = firstFilled(
@@ -697,7 +708,11 @@ function normalizeCityRow(city) {
         city.transportation,
         city.transportation_tips,
         city.transport_recommend,
-        city.transport_recommendation
+        city.transport_recommendation,
+        city.transport_detail,
+        city.traffic_detail,
+        city.traffic_recommend,
+        city.route_transport
     );
 
     city.budgetPlans = firstFilled(
@@ -717,7 +732,15 @@ function normalizeCityRow(city) {
         city.route_plan,
         city.travel_plan,
         city.itinerary,
-        city.schedule
+        city.schedule,
+        city.specific_plan,
+        city.specificPlan,
+        city.strategy,
+        city.guide,
+        city.route,
+        city.routes,
+        city.plan_text,
+        city.detail_plan
     );
 
     city.tags = firstFilled(
@@ -744,14 +767,190 @@ function normalizeCityRows(list) {
     return Array.isArray(list) ? list.map(item => normalizeCityRow(item)) : [];
 }
 
-function mergeMissingCityFields(city, extra) {
+function isFilledValue(value) {
+    return value !== undefined && value !== null && String(value).trim() !== '';
+}
+
+function cleanCityNameValue(value) {
+    return String(value || '').replace(/[\s　]/g, '').trim();
+}
+
+function valueRichness(value) {
+    if (!isFilledValue(value)) return 0;
+
+    if (Array.isArray(value)) {
+        return value.map(item => valueRichness(item)).reduce((sum, item) => sum + item, 0);
+    }
+
+    if (typeof value === 'object') {
+        return Object.values(value).map(item => valueRichness(item)).reduce((sum, item) => sum + item, 0);
+    }
+
+    const text = String(value).trim();
+    if (!text || text.toLowerCase() === 'null' || text.toLowerCase() === 'undefined') return 0;
+
+    return text.length;
+}
+
+const CITY_RICH_TEXT_FIELDS = new Set([
+    'intro',
+    'detail_intro',
+    'city_intro',
+    'long_intro',
+    'description',
+    'desc',
+    'content',
+    'food',
+    'foods',
+    'food_tips',
+    'food_recommend',
+    'stay_tips',
+    'stay',
+    'hotel',
+    'accommodation',
+    'transport_tips',
+    'transport',
+    'traffic',
+    'budgetPlans',
+    'budgetPlan',
+    'budgetplans',
+    'budget_plans',
+    'budget_plan',
+    'plans',
+    'plan',
+    'route_plan',
+    'travel_plan',
+    'itinerary',
+    'schedule',
+    'tags',
+    'type',
+    'types',
+    'travel_type',
+    'travel_types',
+    'tourism_type',
+    'tourism_types',
+    'category',
+    'categories',
+    'highlights'
+]);
+
+function cityCompletenessScore(row) {
+    if (!row) return 0;
+
+    const c = normalizeCityRow({ ...row });
+
+    return [
+        c.name,
+        c.pinyin,
+        c.province,
+        c.region,
+        c.highlights,
+        c.tags,
+        c.score,
+        c.heat,
+        c.budget,
+        c.intro,
+        c.detail_intro,
+        c.food,
+        c.lat,
+        c.lng,
+        c.budgetPlans,
+        c.stay_tips,
+        c.transport_tips,
+        c.image_url,
+        c.img
+    ].reduce((sum, item) => sum + valueRichness(item), 0);
+}
+
+function mergeBestCityFields(city, extra) {
     if (!city || !extra) return city;
 
     Object.keys(extra).forEach(key => {
-        if ((city[key] === undefined || city[key] === null || String(city[key]).trim() === '') && extra[key] !== undefined && extra[key] !== null && String(extra[key]).trim() !== '') {
-            city[key] = extra[key];
+        const next = extra[key];
+        if (!isFilledValue(next)) return;
+
+        const current = city[key];
+
+        if (!isFilledValue(current)) {
+            city[key] = next;
+            return;
+        }
+
+        if (CITY_RICH_TEXT_FIELDS.has(key) && valueRichness(next) > valueRichness(current)) {
+            city[key] = next;
         }
     });
+
+    return city;
+}
+
+function mergeCityRows(rows) {
+    const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+
+    if (!list.length) return null;
+
+    const sorted = [...list].sort((a, b) => {
+        const scoreDiff = cityCompletenessScore(b) - cityCompletenessScore(a);
+        if (scoreDiff !== 0) return scoreDiff;
+
+        return Number(b.id || 0) - Number(a.id || 0);
+    });
+
+    const city = { ...sorted[0] };
+
+    sorted.forEach(row => mergeBestCityFields(city, row));
+
+    return normalizeCityRow(city);
+}
+
+function collapseCityRows(rows) {
+    const list = Array.isArray(rows) ? rows.filter(Boolean) : [];
+    const groups = new Map();
+
+    list.forEach(row => {
+        const key = cleanCityNameValue(row.name) || String(row.id || '');
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(row);
+    });
+
+    return [...groups.values()]
+        .map(group => mergeCityRows(group))
+        .filter(Boolean)
+        .sort((a, b) => {
+            const scoreDiff = Number(b.score || 0) - Number(a.score || 0);
+            if (scoreDiff !== 0) return scoreDiff;
+
+            return Number(b.heat || 0) - Number(a.heat || 0);
+        });
+}
+
+async function getMergedCityByName(name) {
+    const cleanName = cleanCityNameValue(name);
+
+    if (!cleanName) return null;
+
+    const [rows] = await db.query(
+        `SELECT * FROM cities 
+         WHERE name=? 
+            OR REPLACE(REPLACE(TRIM(name),' ',''),'　','')=?
+            OR pinyin=?
+            OR name LIKE ?
+         ORDER BY score DESC, heat DESC, id DESC
+         LIMIT 80`,
+        [name, cleanName, name, `%${name}%`]
+    );
+
+    if (!rows || !rows.length) return null;
+
+    const exactRows = rows.filter(row => cleanCityNameValue(row.name) === cleanName || String(row.pinyin || '').trim().toLowerCase() === String(name).trim().toLowerCase());
+
+    return mergeCityRows(exactRows.length ? exactRows : rows);
+}
+
+function mergeMissingCityFields(city, extra) {
+    if (!city || !extra) return city;
+
+    mergeBestCityFields(city, extra);
 
     return normalizeCityRow(city);
 }
@@ -760,25 +959,45 @@ async function enrichCityDetails(city) {
     if (!city) return city;
 
     const candidates = [
-        { table: 'city_details', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'city_detail', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'travel_city_details', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'city_plans', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'city_info', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'city_infos', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'travel_plans', cityIdField: 'city_id', cityNameField: 'city_name' },
-        { table: 'city_routes', cityIdField: 'city_id', cityNameField: 'city_name' }
+        'city_details',
+        'city_detail',
+        'travel_city_details',
+        'city_plans',
+        'city_info',
+        'city_infos',
+        'travel_plans',
+        'city_routes'
     ];
 
-    for (const item of candidates) {
+    for (const tableName of candidates) {
         try {
+            const cols = await getTableColumns(tableName);
+            if (!cols.length) continue;
+
+            const cityIdCol = pickColumn(cols, ['city_id', 'cityId', 'cid']);
+            const cityNameCol = pickColumn(cols, ['city_name', 'city', 'name']);
+            const where = [];
+            const params = [];
+
+            if (cityIdCol && city.id) {
+                where.push(`\`${cityIdCol}\`=?`);
+                params.push(city.id);
+            }
+
+            if (cityNameCol && city.name) {
+                where.push(`\`${cityNameCol}\`=?`);
+                params.push(city.name);
+            }
+
+            if (!where.length) continue;
+
             const [rows] = await db.query(
-                `SELECT * FROM \`${item.table}\` WHERE \`${item.cityIdField}\`=? OR \`${item.cityNameField}\`=? LIMIT 1`,
-                [city.id || 0, city.name || '']
+                `SELECT * FROM \`${tableName}\` WHERE ${where.join(' OR ')} LIMIT 20`,
+                params
             );
 
-            if (rows && rows[0]) {
-                mergeMissingCityFields(city, rows[0]);
+            if (rows && rows.length) {
+                rows.forEach(row => mergeMissingCityFields(city, row));
             }
         } catch (e) {}
     }
@@ -950,7 +1169,7 @@ async function getSearchCandidateCities(region) {
     sql += ` ORDER BY score DESC LIMIT 1000`;
 
     const [rows] = await db.query(sql, params);
-    return fillCityImages(normalizeCityRows(rows));
+    return fillCityImages(collapseCityRows(rows));
 }
 
 async function searchCitiesWithFilters(region, filters, origin) {
@@ -1352,7 +1571,7 @@ app.get('/api/top30', (req, res) => {
 
     pool.query(
         {
-            sql: `SELECT * FROM cities WHERE (?='all' OR region=?) ORDER BY score DESC LIMIT 30`,
+            sql: `SELECT * FROM cities WHERE (?='all' OR region=?) ORDER BY score DESC, heat DESC LIMIT 1000`,
             timeout: 30000
         },
         [region, region],
@@ -1361,16 +1580,16 @@ app.get('/api/top30', (req, res) => {
                 console.error('/api/top30 查询失败:', err.message);
                 return pool.query(
                     {
-                        sql: `SELECT * FROM cities LIMIT 30`,
+                        sql: `SELECT * FROM cities ORDER BY score DESC, heat DESC LIMIT 1000`,
                         timeout: 30000
                     },
                     (fallbackErr, fallbackData) => {
                         if (fallbackErr) return res.status(500).json({ error: fallbackErr.message });
-                        res.json(fillCityImages(fallbackData));
+                        res.json(fillCityImages(collapseCityRows(fallbackData).slice(0, 30)));
                     }
                 );
             }
-            res.json(fillCityImages(data));
+            res.json(fillCityImages(collapseCityRows(data).slice(0, 30)));
         }
     );
 });
@@ -1380,11 +1599,19 @@ app.get('/api/search/keyword', (req, res) => {
     const like = `%${q}%`;
 
     pool.query(
-        `SELECT * FROM cities WHERE name LIKE ? OR intro LIKE ? ORDER BY score DESC LIMIT 30`,
-        [like, like],
+        `SELECT * FROM cities 
+         WHERE name LIKE ? 
+            OR pinyin LIKE ? 
+            OR province LIKE ? 
+            OR intro LIKE ? 
+            OR detail_intro LIKE ? 
+            OR tags LIKE ? 
+            OR highlights LIKE ?
+         ORDER BY score DESC, heat DESC LIMIT 1000`,
+        [like, like, like, like, like, like, like],
         (err, data) => {
             if (err) return res.status(500).json({ error: err.message });
-            res.json(fillCityImages(data));
+            res.json(fillCityImages(collapseCityRows(data).slice(0, 30)));
         }
     );
 });
@@ -1453,7 +1680,18 @@ app.get('/api/picker/list', (req, res) => {
 
     pool.query(sql, params, (err, data) => {
         if (err) return res.status(500).json({ error: err.message });
-        res.json(data);
+
+        const seen = new Set();
+        const list = [];
+
+        (Array.isArray(data) ? data : []).forEach(item => {
+            const key = cleanCityNameValue(item.name);
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            list.push(item);
+        });
+
+        res.json(list);
     });
 });
 
@@ -1465,12 +1703,7 @@ app.get('/api/city', async (req, res) => {
             return res.json(null);
         }
 
-        const [rows] = await db.query(
-            `SELECT * FROM cities WHERE name=? LIMIT 1`,
-            [name]
-        );
-
-        let city = rows[0] || null;
+        let city = await getMergedCityByName(name);
 
         if (!city) {
             return res.json(null);
@@ -1496,12 +1729,7 @@ app.get('/api/city/attractions', async (req, res) => {
             return res.json([]);
         }
 
-        const [cityRows] = await db.query(
-            `SELECT * FROM cities WHERE name=? LIMIT 1`,
-            [name]
-        );
-
-        const city = cityRows[0];
+        const city = await getMergedCityByName(name);
 
         if (!city) {
             return res.json([]);
