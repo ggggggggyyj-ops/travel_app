@@ -126,6 +126,12 @@ function jsArg(value) {
     return JSON.stringify(String(value ?? ""));
 }
 
+function forceScrollTop() {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+}
+
 function getCityImage(c) {
     if (!c) return "";
 
@@ -205,6 +211,15 @@ function getCurrentMonthLabel() {
     return monthMap[new Date().getMonth()];
 }
 
+function applyTitleStyle() {
+    const pageTitle = document.getElementById("pageTitle");
+
+    if (pageTitle) {
+        pageTitle.style.color = "#f5e6a8";
+        pageTitle.style.fontWeight = "900";
+    }
+}
+
 function setHero(c, label) {
     const heroEl = document.getElementById("hero");
 
@@ -212,7 +227,7 @@ function setHero(c, label) {
 
     heroEl.innerHTML = scene(c) +
         `<div class="badges">
-            <span class="badge gold" style="font-size:24px;padding:9px 24px !important;font-weight:900;letter-spacing:1px;">${label}</span>
+            <span class="badge gold" style="font-size:22px;padding:8px 22px !important;font-weight:900;letter-spacing:1px;">${label}</span>
         </div>
         <div class="intro">${esc(c.intro || `${c.name}的魅力远不止于此，更多精彩等你亲身体验。`)}</div>`;
 
@@ -233,7 +248,7 @@ function renderCards(list) {
             <article class="card" onclick="openDetail(${jsArg(c.name)})">
                 ${scene(c)}
                 <div class="badges">
-                    <span class="badge gold" style="font-size:22px;padding:8px 20px !important;font-weight:900;letter-spacing:1px;">TOP ${realRank}</span>
+                    <span class="badge gold" style="font-size:20px;padding:7px 18px !important;font-weight:900;letter-spacing:.6px;">TOP ${realRank}</span>
                 </div>
                 <div class="card-desc">${esc(oneLine(c))}</div>
             </article>
@@ -250,6 +265,8 @@ function showList(title, list, label) {
 
     if (pageTitle) pageTitle.textContent = title;
     if (listTitle) listTitle.innerHTML = title;
+
+    applyTitleStyle();
 
     document.body.classList.toggle("noHero", !list.length);
 
@@ -337,6 +354,7 @@ async function triggerSearch() {
 
 async function goHome() {
     mode = "home";
+    currentRegion = "all";
 
     const homeWrap = document.getElementById("homeWrap");
     const detail = document.getElementById("detail");
@@ -348,10 +366,14 @@ async function goHome() {
     if (headerHome) headerHome.style.display = 'flex';
     if (headerDetail) headerDetail.style.display = 'none';
 
+    document.querySelectorAll("#headerHome .tab").forEach(x => {
+        x.classList.toggle("active", x.dataset.r === "all");
+    });
+
     const data = await fetchData(`/api/top30?region=all`);
     const list = Array.isArray(data) ? data : [];
 
-    showList(`${getCurrentMonthLabel()}热门城市TOP30`, list, "TOP 1");
+    showList(`${getCurrentMonthLabel()}全部热门城市TOP30`, list, "TOP 1");
 
     window.scrollTo({ top: 0, behavior: "smooth" });
 }
@@ -364,11 +386,11 @@ async function setRegion(r, el) {
     if (el) el.classList.add("active");
 
     const monthLabel = getCurrentMonthLabel();
-    const regionLabel = r === "all" ? "全部城市" : r === "domestic" ? "国内城市" : "国外城市";
+    const regionTitle = r === "all" ? "全部" : r === "domestic" ? "国内" : "国外";
     const data = await fetchData(`/api/top30?region=${r}`);
 
     if (data) {
-        showList(`${monthLabel} · ${regionLabel}热门排行`, data);
+        showList(`${monthLabel}${regionTitle}热门城市TOP30`, data);
     }
 
     window.scrollTo({ top: 0, behavior: "instant" });
@@ -517,6 +539,8 @@ async function openDetail(n) {
     if (homeWrap) homeWrap.style.display = 'none';
     if (detail) detail.style.display = 'block';
 
+    forceScrollTop();
+
     if (dHero) dHero.innerHTML = scene(c);
     if (dIntro) dIntro.textContent = c.detail_intro || c.intro;
     if (dBudget) dBudget.innerHTML = budgetHTML(c);
@@ -556,7 +580,23 @@ async function openDetail(n) {
                 ${displaySpots.map(item => `
                     <div class="card" style="height:160px;">
                         <div class="scene" style='${bgStyle(item.image)}'>
-                            <div class="cityname" style="font-size:18px;left:16px;bottom:16px;top:auto;">
+                            <div style="
+                                position:absolute;
+                                left:16px;
+                                right:16px;
+                                bottom:16px;
+                                top:auto;
+                                transform:none !important;
+                                color:#fff;
+                                font-size:20px;
+                                font-weight:700;
+                                line-height:1.3;
+                                letter-spacing:0;
+                                white-space:nowrap;
+                                overflow:hidden;
+                                text-overflow:ellipsis;
+                                text-shadow:0 2px 10px rgba(0,0,0,.65);
+                            ">
                                 ${esc(item.name)}
                             </div>
                         </div>
@@ -595,7 +635,12 @@ async function openDetail(n) {
         dStay.innerHTML = `<div style="white-space:pre-wrap;">${esc(stayText)}</div>`;
     }
 
+    forceScrollTop();
+    requestAnimationFrame(forceScrollTop);
+
     await loadComments(c.name, 'hot');
+
+    requestAnimationFrame(forceScrollTop);
 }
 
 function backToList() {
