@@ -4,31 +4,37 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>漫游 · 智能旅游城市推荐</title>
+
     <link rel="stylesheet" href="reset.css">
     <link rel="stylesheet" href="layout.css">
     <link rel="stylesheet" href="sidebar.css">
     <link rel="stylesheet" href="main-view.css">
     <link rel="stylesheet" href="detail-view.css">
     <link rel="stylesheet" href="picker-modal.css">
+
     <meta http-equiv="Content-Security-Policy" content="img-src * data: blob: 'self' 'unsafe-inline'">
 </head>
+
 <body>
     <!-- ===== 首页头部 ===== -->
     <header class="header" id="headerHome">
         <div class="logo"><b>漫游</b><span>WANDERLUST</span></div>
+
         <div style="display:flex; align-items:center; gap:12px;">
             <button class="navbtn" onclick="goHome()">返回首页</button>
             <button class="tab active" data-r="all" onclick="setRegion('all',this)">全部</button>
             <button class="tab" data-r="domestic" onclick="setRegion('domestic',this)">国内</button>
             <button class="tab" data-r="abroad" onclick="setRegion('abroad',this)">国外</button>
         </div>
+
         <div class="auth" id="authButtons">
-            <!-- 【关键修复】：直接绑定 openLogin() 函数 -->
             <button id="loginBtn" class="auth-btn" onclick="openLogin()">登录</button>
             <button id="regBtn" class="reg auth-btn" onclick="openLogin()">注册</button>
-            <!-- 登录成功后会显示这个头像按钮 -->
-            <button id="profileBtn" style="display:none; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; border: 1px solid var(--gold); cursor:pointer;" onclick="openProfile()">
-                <img id="profileAvatar" src="" style="width: 100%; height: 100%; object-fit: cover;">
+
+            <button id="profileBtn"
+                style="display:none; width:40px; height:40px; border-radius:50%; overflow:hidden; border:1px solid var(--gold); cursor:pointer;"
+                onclick="openProfile()">
+                <img id="profileAvatar" src="" style="width:100%; height:100%; object-fit:cover;">
             </button>
         </div>
     </header>
@@ -36,14 +42,19 @@
     <!-- ===== 详情页头部 ===== -->
     <header class="header" id="headerDetail" style="display:none;">
         <div class="logo"><b>漫游</b><span>WANDERLUST</span></div>
+
         <div style="display:flex; align-items:center; gap:12px;">
             <button class="navbtn" onclick="backToList()">返回首页</button>
         </div>
+
         <div class="auth" id="authButtonsDetail">
             <button id="loginBtnD" class="auth-btn" onclick="openLogin()">登录</button>
             <button id="regBtnD" class="reg auth-btn" onclick="openLogin()">注册</button>
-            <button id="profileBtnD" style="display:none; width: 40px; height: 40px; border-radius: 50%; overflow: hidden; border: 1px solid var(--gold); cursor:pointer;" onclick="openProfile()">
-                <img id="profileAvatarD" src="" style="width: 100%; height: 100%; object-fit: cover;">
+
+            <button id="profileBtnD"
+                style="display:none; width:40px; height:40px; border-radius:50%; overflow:hidden; border:1px solid var(--gold); cursor:pointer;"
+                onclick="openProfile()">
+                <img id="profileAvatarD" src="" style="width:100%; height:100%; object-fit:cover;">
             </button>
         </div>
     </header>
@@ -52,12 +63,25 @@
     <div class="app" id="homeWrap">
         <aside class="side">
             <div class="side-title">出发城市</div>
+
             <div style="position:relative; width:100%;">
-                <input id="baseCityInput" class="side-input" placeholder="点击选择或输入出发城市" onfocus="openPicker('base')" onkeydown="if(event.key==='Enter'){triggerSearch()}">
+                <input id="baseCityInput"
+                    class="side-input"
+                    placeholder="点击选择或输入出发城市"
+                    onfocus="openPicker('base')"
+                    onkeydown="if(event.key==='Enter'){triggerSearch()}">
+
                 <button id="clearCityBtn" onclick="clearBaseCity()">✕</button>
             </div>
+
             <div class="side-title">综合筛选</div>
-            <input id="budgetInput" class="side-input" type="number" placeholder="预算上限，如 3000" onkeydown="if(event.key==='Enter'){triggerSearch()}">
+
+            <input id="budgetInput"
+                class="side-input"
+                type="number"
+                placeholder="预算上限，如 3000"
+                onkeydown="if(event.key==='Enter'){triggerSearch()}">
+
             <select id="daysInput" class="side-input" onchange="triggerSearch()">
                 <option value="">选择天数</option>
                 <option value="1">1天</option>
@@ -65,38 +89,72 @@
                 <option value="3">3天2晚</option>
                 <option value="4">4天以上</option>
             </select>
+
             <div id="tagFilters" class="type-chips"></div>
+
             <button id="searchBtn" class="side-btn">搜索推荐</button>
         </aside>
 
         <main class="main">
-            <section class="page-title"><h2 id="pageTitle">本月热门城市排行榜</h2></section>
+            <section class="page-title">
+                <h2 id="pageTitle">本月热门城市排行榜</h2>
+            </section>
+
             <section id="hero" class="hero"></section>
-            <h2 id="listTitle" style="display: none;"></h2>
+
+            <h2 id="listTitle" style="display:none;"></h2>
+
             <section id="cityGrid" class="grid"></section>
         </main>
     </div>
 
     <!-- ===== 详情页区域 ===== -->
-    <div id="detail" class="detail">
+    <div id="detail" class="detail" style="display:none;">
         <div class="detail-layout">
             <main class="detail-main">
                 <section id="dHero" class="detail-hero"></section>
-                <section class="info-card"><h2>城市简介</h2><p id="dIntro"></p></section>
-                <section class="info-card"><h2>美食推荐</h2><div id="dFood" class="food-tags"></div></section>
-                <section class="info-card"><h2>推荐景点</h2><div id="dSpots" class="grid"></div></section>
-                <section class="info-card"><h2>具体方案</h2><div id="dBudget" class="budget-list"></div></section>
-                <section class="info-card"><h2>住宿建议</h2><p id="dStay"></p></section>
-                <section class="info-card"><h2>交通建议</h2><p id="dTransport"></p></section>
+
+                <section class="info-card">
+                    <h2>城市简介</h2>
+                    <p id="dIntro"></p>
+                </section>
+
+                <section class="info-card">
+                    <h2>美食推荐</h2>
+                    <div id="dFood" class="food-tags"></div>
+                </section>
+
+                <section class="info-card">
+                    <h2>推荐景点</h2>
+                    <div id="dSpots" class="grid"></div>
+                </section>
+
+                <section class="info-card">
+                    <h2>具体方案</h2>
+                    <div id="dBudget" class="budget-list"></div>
+                </section>
+
+                <section class="info-card">
+                    <h2>住宿建议</h2>
+                    <p id="dStay"></p>
+                </section>
+
+                <section class="info-card">
+                    <h2>交通建议</h2>
+                    <p id="dTransport"></p>
+                </section>
             </main>
 
             <aside class="comments">
                 <h2>旅客评价</h2>
+
                 <div class="sorts">
                     <button class="active" onclick="switchSort('hot', this)">最热评论</button>
                     <button onclick="switchSort('new', this)">最新评论</button>
                 </div>
+
                 <div id="commentList" class="comment-list"></div>
+
                 <div class="comment-form">
                     <textarea id="commentText" placeholder="登录后发布你的评价..."></textarea>
                     <button onclick="postComment()">发布评价</button>
@@ -109,25 +167,31 @@
     <div id="picker" class="picker">
         <div class="picker-header">
             <h2>选择城市</h2>
-            <input id="pickerInput" placeholder="输入城市名称筛选，如广州" oninput="renderPicker(this.value)">
+
+            <input id="pickerInput"
+                placeholder="输入城市名称筛选，如广州"
+                oninput="renderPicker(this.value)">
+
             <button class="close-picker-btn" onclick="closePicker()">✕</button>
         </div>
+
         <div class="picker-tabs">
             <button class="tab-btn active" onclick="switchPickerRegion('domestic', this)">国内</button>
             <button class="tab-btn" onclick="switchPickerRegion('abroad', this)">国外</button>
         </div>
+
         <div id="pickerBody" class="picker-body"></div>
     </div>
 
-    <!-- ===== 登录弹窗 (空壳) ===== -->
+    <!-- ===== 登录弹窗 ===== -->
     <div id="loginModal" class="modal"></div>
 
-    <!-- ===== 个人主页弹窗 (空壳) ===== -->
+    <!-- ===== 个人主页弹窗 ===== -->
     <div id="profileModal" class="modal"></div>
 
     <div id="toast" class="toast"></div>
 
     <script src="images.js"></script>
-    <script src="core.js?v=20260626"></script>
+    <script src="core.js?v=20260701-fix2"></script>
 </body>
 </html>
