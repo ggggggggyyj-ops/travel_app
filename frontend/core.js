@@ -1,19 +1,20 @@
 // ================================
 // 0. 配置与核心数据源
 // ================================
-const API_BASE = ''; 
+const API_BASE = '';
+
 // ================================
 // 1. 全局状态定义
 // ================================
 let currentRegion = "all";
-let mode = "home"; 
+let mode = "home";
 let activeFilters = null;
 let activeKeyword = "";
 let previousScroll = 0;
 let currentCity = null;
 
 // ================================
-// 【核心新增】用户状态
+// 用户状态
 // ================================
 let currentUser = null;
 const USER_STORE_KEY = 'travel_users';
@@ -59,22 +60,35 @@ const tags = ["海边", "爬山", "雪景", "古城", "美食", "温泉", "情�
 // ================================
 function esc(s) {
     return String(s ?? "").replace(/[&<>"']/g, m => ({
-        "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#39;"
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        "\"": "&quot;",
+        "'": "&#39;"
     }[m]));
 }
 
-function toast(t) { 
-    const e = document.getElementById("toast"); 
-    e.textContent = t; 
-    e.style.display = "block"; 
-    setTimeout(() => e.style.display = "none", 1800); 
+function toast(t) {
+    const e = document.getElementById("toast");
+    if (!e) return;
+
+    e.textContent = t;
+    e.style.display = "block";
+
+    clearTimeout(e._timer);
+    e._timer = setTimeout(() => {
+        e.style.display = "none";
+    }, 1800);
 }
 
-function km(a, b, c, d) { 
-    const R = 6371, rad = x => x * Math.PI / 180; 
-    const x = rad(c - a), y = rad(d - b); 
-    const q = Math.sin(x / 2) ** 2 + Math.cos(rad(a)) * Math.cos(rad(c)) * Math.sin(y / 2) ** 2; 
-    return Math.round(R * 2 * Math.atan2(Math.sqrt(q), Math.sqrt(1 - q))); 
+function km(a, b, c, d) {
+    const R = 6371;
+    const rad = x => x * Math.PI / 180;
+    const x = rad(c - a);
+    const y = rad(d - b);
+    const q = Math.sin(x / 2) ** 2 + Math.cos(rad(a)) * Math.cos(rad(c)) * Math.sin(y / 2) ** 2;
+
+    return Math.round(R * 2 * Math.atan2(Math.sqrt(q), Math.sqrt(1 - q)));
 }
 
 function normalizeImageUrl(url) {
@@ -88,9 +102,28 @@ function normalizeImageUrl(url) {
         return `/proxy-image?url=${encodeURIComponent(u)}`;
     }
 
+    if (/^data:/i.test(u) || /^blob:/i.test(u)) {
+        return u;
+    }
+
     u = u.replace(/^\.?\//, "");
+    u = u.replace(/^frontend\//, "");
 
     return "/" + u;
+}
+
+function bgStyle(url) {
+    const img = normalizeImageUrl(url);
+
+    if (!img) {
+        return "background:#121620 center center / cover no-repeat !important;";
+    }
+
+    return `background:#121620 url("${String(img).replace(/"/g, '&quot;')}") center center / cover no-repeat !important;`;
+}
+
+function jsArg(value) {
+    return JSON.stringify(String(value ?? ""));
 }
 
 function getCityImage(c) {
@@ -121,17 +154,20 @@ function getAttractionImage(a) {
     return normalizeImageUrl(url);
 }
 
-function scene(c) { 
-    let hls = (c.highlights || []);
+function scene(c) {
+    let hls = c.highlights || [];
 
     if (typeof hls === 'string') {
-        hls = hls.split(/[，、,]/).map(item => item.trim()).filter(item => item.length > 0);
+        hls = hls
+            .split(/[，、,]/)
+            .map(item => item.trim())
+            .filter(item => item.length > 0);
     }
 
     if (!Array.isArray(hls) || hls.length === 0) {
         hls = ['城市漫游', '当地美食', '特色街巷'];
     }
-    
+
     let htmlSpans = '';
 
     for (let i = 0; i < 3 && i < hls.length; i++) {
@@ -141,23 +177,24 @@ function scene(c) {
     const imgUrl = getCityImage(c);
 
     return `
-        <div class="scene" style="background-image: ${imgUrl ? `url('${imgUrl}')` : 'none'} !important; background-size: cover; background-position: center; background-color: #121620;">
+        <div class="scene" style='${bgStyle(imgUrl)}'>
             <div class="cityname">${esc(c.name)}</div>
             <div class="feature-line">${htmlSpans}</div>
         </div>
-    `; 
+    `;
 }
 
-function oneLine(c) { 
+function oneLine(c) {
     let t = c.intro || '';
+
     if (!t) return '暂无介绍';
-    
-    let cleanText = t.replace(/<[^>]*>/g, '')
-                      .replace(/<br\s*\/?>/gi, ' ')
-                      .replace(/\r?\n|\r/g, ' ')
-                      .replace(/\s+/g, ' ')
-                      .trim(); 
-    return cleanText; 
+
+    return t
+        .replace(/<[^>]*>/g, '')
+        .replace(/<br\s*\/?>/gi, ' ')
+        .replace(/\r?\n|\r/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
 }
 
 // ================================
@@ -165,37 +202,38 @@ function oneLine(c) {
 // ================================
 function getCurrentMonthLabel() {
     const monthMap = ["1月", "2月", "3月", "4月", "5月", "6月", "7月", "8月", "9月", "10月", "11月", "12月"];
-    const currentMonth = new Date().getMonth();
-    return monthMap[currentMonth];
+    return monthMap[new Date().getMonth()];
 }
 
 function setHero(c, label) {
     const heroEl = document.getElementById("hero");
+
     if (!heroEl || !c) return;
 
-    heroEl.innerHTML = scene(c) + 
+    heroEl.innerHTML = scene(c) +
         `<div class="badges">
-            <span class="badge gold" style="font-size: 24px; padding: 9px 24px !important; font-weight: 900; letter-spacing: 1px;">${label}</span>
+            <span class="badge gold" style="font-size:24px;padding:9px 24px !important;font-weight:900;letter-spacing:1px;">${label}</span>
         </div>
         <div class="intro">${esc(c.intro || `${c.name}的魅力远不止于此，更多精彩等你亲身体验。`)}</div>`;
+
     heroEl.onclick = () => openDetail(c.name);
 }
 
 function renderCards(list) {
-
     list = Array.isArray(list) ? list : [];
 
     const el = document.getElementById("cityGrid");
+
     if (!el) return;
 
     el.innerHTML = list.length ? list.map((c, i) => {
         const realRank = i + 1;
 
         return `
-            <article class="card" onclick="openDetail('${c.name}')">
+            <article class="card" onclick="openDetail(${jsArg(c.name)})">
                 ${scene(c)}
                 <div class="badges">
-                    <span class="badge gold" style="font-size: 22px; padding: 8px 20px !important; font-weight: 900; letter-spacing: 1px;">TOP ${realRank}</span>
+                    <span class="badge gold" style="font-size:22px;padding:8px 20px !important;font-weight:900;letter-spacing:1px;">TOP ${realRank}</span>
                 </div>
                 <div class="card-desc">${esc(oneLine(c))}</div>
             </article>
@@ -204,18 +242,16 @@ function renderCards(list) {
 }
 
 function showList(title, list, label) {
-
     list = Array.isArray(list) ? list : [];
 
     const pageTitle = document.getElementById("pageTitle");
     const listTitle = document.getElementById("listTitle");
+    const heroEl = document.getElementById("hero");
 
     if (pageTitle) pageTitle.textContent = title;
     if (listTitle) listTitle.innerHTML = title;
 
     document.body.classList.toggle("noHero", !list.length);
-
-    const heroEl = document.getElementById("hero");
 
     if (list.length && heroEl) {
         heroEl.style.display = "block";
@@ -234,7 +270,9 @@ function showList(title, list, label) {
 async function fetchData(endpoint = '/cities', options = {}) {
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, options);
+
         if (!response.ok) return [];
+
         return await response.json().catch(() => []);
     } catch (error) {
         console.error("API 请求失败:", error);
@@ -250,7 +288,7 @@ async function triggerSearch() {
     const budget = Number(document.getElementById("budgetInput")?.value || 0);
     const days = document.getElementById("daysInput")?.value || "";
     const selectedTags = [...document.querySelectorAll(".chip.active")].map(x => x.textContent);
-    
+
     if (!baseCity && !budget && !days && selectedTags.length === 0) {
         return goHome();
     }
@@ -259,7 +297,11 @@ async function triggerSearch() {
 
     if (baseCity) {
         const baseCityData = await fetchData(`/api/city?name=${encodeURIComponent(baseCity)}`);
-        if (!baseCityData) { toast("出发城市未找到"); return; }
+
+        if (!baseCityData || Array.isArray(baseCityData)) {
+            toast("出发城市未找到");
+            return;
+        }
 
         const params = new URLSearchParams({
             lat: baseCityData.lat,
@@ -269,7 +311,9 @@ async function triggerSearch() {
             days: days,
             tags: selectedTags.join(',')
         });
+
         const data = await fetchData(`/api/search/full?${params.toString()}`);
+
         if (data) {
             showList(`从${baseCityData.name}出发 · 旅游推荐`, data, `距离最近`);
         }
@@ -280,11 +324,14 @@ async function triggerSearch() {
             days: days,
             tags: selectedTags.join(',')
         });
+
         const data = await fetchData(`/api/search/filter?${params.toString()}`);
+
         if (data) {
             showList("搜索推荐结果", data, `匹配成功`);
         }
     }
+
     window.scrollTo({ top: 0, behavior: "instant" });
 }
 
@@ -293,12 +340,15 @@ async function goHome() {
 
     const homeWrap = document.getElementById("homeWrap");
     const detail = document.getElementById("detail");
+    const headerHome = document.getElementById('headerHome');
+    const headerDetail = document.getElementById('headerDetail');
 
     if (detail) detail.style.display = "none";
     if (homeWrap) homeWrap.style.display = "grid";
+    if (headerHome) headerHome.style.display = 'flex';
+    if (headerDetail) headerDetail.style.display = 'none';
 
     const data = await fetchData(`/api/top30?region=all`);
-
     const list = Array.isArray(data) ? data : [];
 
     showList(`${getCurrentMonthLabel()}热门城市TOP30`, list, "TOP 1");
@@ -308,23 +358,31 @@ async function goHome() {
 
 async function setRegion(r, el) {
     currentRegion = r;
+
     document.querySelectorAll(".tab").forEach(x => x.classList.remove("active"));
+
     if (el) el.classList.add("active");
-    
+
     const monthLabel = getCurrentMonthLabel();
     const regionLabel = r === "all" ? "全部城市" : r === "domestic" ? "国内城市" : "国外城市";
     const data = await fetchData(`/api/top30?region=${r}`);
+
     if (data) {
         showList(`${monthLabel} · ${regionLabel}热门排行`, data);
     }
+
     window.scrollTo({ top: 0, behavior: "instant" });
 }
 
 async function keywordSearch(v) {
-    v = (v || "").trim(); 
+    v = (v || "").trim();
+
     if (!v) return goHome();
+
     const baseCityInput = document.getElementById("baseCityInput");
-    if (baseCityInput) baseCityInput.value = v; 
+
+    if (baseCityInput) baseCityInput.value = v;
+
     await triggerSearch();
 }
 
@@ -332,15 +390,19 @@ async function keywordSearch(v) {
 // 6. Picker
 // ================================
 let pickerTarget = "top";
-let pickerRegion = "国内"; 
+let pickerRegion = "国内";
 
 async function openPicker(target = "top") {
     pickerTarget = target;
+
     const picker = document.getElementById("picker");
     const pickerInput = document.getElementById("pickerInput");
+
     if (picker) picker.classList.add("show");
     if (pickerInput) pickerInput.value = "";
+
     await renderPicker("");
+
     setTimeout(() => {
         const input = document.getElementById("pickerInput");
         if (input) input.focus();
@@ -349,48 +411,71 @@ async function openPicker(target = "top") {
 
 function closePicker() {
     const picker = document.getElementById("picker");
+
     if (picker) picker.classList.remove("show");
 }
 
 window.switchPickerRegion = function(region, btn) {
     pickerRegion = region === "domestic" ? "国内" : "国外";
+
     document.querySelectorAll(".picker-tabs .tab-btn").forEach(b => b.classList.remove("active"));
+
     if (btn) btn.classList.add("active");
+
     renderPicker(document.getElementById("pickerInput")?.value || "");
 };
 
 async function renderPicker(keyword = "") {
     const body = document.getElementById("pickerBody");
+
     if (!body) return;
 
-    const params = new URLSearchParams({ region: pickerRegion, keyword: keyword });
+    const params = new URLSearchParams({
+        region: pickerRegion,
+        keyword: keyword
+    });
+
     const list = await fetchData(`/api/picker/list?${params.toString()}`);
-    
+
     body.innerHTML = "";
+
     if (!list || list.length === 0) {
         body.innerHTML = `<div style="padding:40px;text-align:center;opacity:0.6">未找到匹配城市</div>`;
         return;
     }
 
     const groups = {};
+
     list.forEach(city => {
         const letter = (city.pinyin || "#")[0].toUpperCase();
+
         if (!groups[letter]) groups[letter] = [];
+
         groups[letter].push(city);
     });
 
     let html = "";
+
     Object.keys(groups).sort().forEach(letter => {
         html += `<div class="letter">${letter}</div><div class="city-pills">`;
-        groups[letter].forEach(c => html += `<button class="city-pill" onclick="chooseCity('${c.name}')">${c.name}</button>`);
+
+        groups[letter].forEach(c => {
+            html += `<button class="city-pill" onclick="chooseCity(${jsArg(c.name)})">${esc(c.name)}</button>`;
+        });
+
         html += `</div>`;
     });
+
     body.innerHTML = html;
 }
 
 function chooseCity(name) {
     const baseCityInput = document.getElementById("baseCityInput");
+    const clearCityBtn = document.getElementById("clearCityBtn");
+
     if (baseCityInput) baseCityInput.value = name;
+    if (clearCityBtn) clearCityBtn.style.display = 'flex';
+
     closePicker();
 }
 
@@ -405,16 +490,20 @@ async function openDetail(n) {
     previousScroll = window.scrollY;
 
     const c = await fetchData(`/api/city?name=${encodeURIComponent(n)}`);
-    if (!c) { toast('未找到该城市'); return; }
+
+    if (!c || Array.isArray(c)) {
+        toast('未找到该城市');
+        return;
+    }
 
     if (!c.intro) c.intro = `${c.name}是一座拥有独特魅力的城市，期待您的探索。`;
     if (!c.food) c.food = '当地特色美食';
-    if (!c.highlights || c.highlights.length===0) c.highlights = ['城市地标', '历史街区', '特色美食'];
+    if (!c.highlights || c.highlights.length === 0) c.highlights = ['城市地标', '历史街区', '特色美食'];
     if (!c.score) c.score = 8.0;
     if (!c.budget) c.budget = 1500;
 
     currentCity = c;
-    
+
     const headerHome = document.getElementById('headerHome');
     const headerDetail = document.getElementById('headerDetail');
     const homeWrap = document.getElementById('homeWrap');
@@ -425,25 +514,29 @@ async function openDetail(n) {
 
     if (headerHome) headerHome.style.display = 'none';
     if (headerDetail) headerDetail.style.display = 'flex';
-
     if (homeWrap) homeWrap.style.display = 'none';
     if (detail) detail.style.display = 'block';
 
     if (dHero) dHero.innerHTML = scene(c);
-    if (dIntro) dIntro.textContent = c.detail_intro || c.intro; 
+    if (dIntro) dIntro.textContent = c.detail_intro || c.intro;
     if (dBudget) dBudget.innerHTML = budgetHTML(c);
 
     let rawSpots = c.highlights;
+
     if (typeof rawSpots === 'string') {
-        rawSpots = rawSpots.split(/[，、,]/).map(item => item.trim()).filter(item => item.length > 0);
+        rawSpots = rawSpots
+            .split(/[，、,]/)
+            .map(item => item.trim())
+            .filter(item => item.length > 0);
     }
+
     if (!Array.isArray(rawSpots) || rawSpots.length === 0) {
         rawSpots = ['城市地标', '历史街区', '特色美食'];
     }
 
     const spots = rawSpots.slice(0, 6);
-
     const dSpots = document.getElementById('dSpots');
+
     if (dSpots) {
         const attractionData = await fetchData(`/api/city/attractions?name=${encodeURIComponent(c.name)}`);
         const attractionList = Array.isArray(attractionData) ? attractionData : [];
@@ -462,7 +555,7 @@ async function openDetail(n) {
             <div class="grid">
                 ${displaySpots.map(item => `
                     <div class="card" style="height:160px;">
-                        <div class="scene" style="${item.image ? `background-image:url('${item.image}')` : ''}; background-size:cover; background-position:center;">
+                        <div class="scene" style='${bgStyle(item.image)}'>
                             <div class="cityname" style="font-size:18px;left:16px;bottom:16px;top:auto;">
                                 ${esc(item.name)}
                             </div>
@@ -474,17 +567,33 @@ async function openDetail(n) {
     }
 
     const dFood = document.getElementById('dFood');
-    if (dFood) dFood.innerHTML = String(c.food || '').split('、').map(x => `<span>${x}</span>`).join('');
+
+    if (dFood) {
+        dFood.innerHTML = String(c.food || '')
+            .split(/[、，,]/)
+            .map(x => x.trim())
+            .filter(Boolean)
+            .map(x => `<span>${esc(x)}</span>`)
+            .join('');
+    }
 
     let transportText = c.transport_tips || '暂无详细交通建议。';
     transportText = transportText.replace(/\\n/g, '\n');
+
     const dTransport = document.getElementById('dTransport');
-    if (dTransport) dTransport.innerHTML = `<div style="white-space:pre-wrap;">${esc(transportText)}</div>`;
-    
+
+    if (dTransport) {
+        dTransport.innerHTML = `<div style="white-space:pre-wrap;">${esc(transportText)}</div>`;
+    }
+
     let stayText = c.stay_tips || '暂无详细住宿建议。';
     stayText = stayText.replace(/\\n/g, '\n');
+
     const dStay = document.getElementById('dStay');
-    if (dStay) dStay.innerHTML = `<div style="white-space:pre-wrap;">${esc(stayText)}</div>`;
+
+    if (dStay) {
+        dStay.innerHTML = `<div style="white-space:pre-wrap;">${esc(stayText)}</div>`;
+    }
 
     await loadComments(c.name, 'hot');
 }
@@ -499,13 +608,18 @@ function backToList() {
     if (homeWrap) homeWrap.style.display = "grid";
     if (headerHome) headerHome.style.display = 'flex';
     if (headerDetail) headerDetail.style.display = 'none';
+
+    setTimeout(() => {
+        window.scrollTo({ top: previousScroll || 0, behavior: "instant" });
+    }, 0);
 }
 
 // ================================
-// 7. 评论系统（保持不动）
+// 7. 评论系统
 // ================================
 async function loadComments(cityName, sortType = 'hot') {
     const container = document.getElementById('commentList');
+
     if (!container) return;
 
     const data = await fetchData(`/api/comments?city=${encodeURIComponent(cityName)}&sort=${sortType}`);
@@ -529,7 +643,9 @@ async function loadComments(cityName, sortType = 'hot') {
 
 function switchSort(sortType, btn) {
     document.querySelectorAll('.sorts button').forEach(b => b.classList.remove('active'));
+
     if (btn) btn.classList.add('active');
+
     if (currentCity && currentCity.name) {
         loadComments(currentCity.name, sortType);
     }
@@ -559,9 +675,11 @@ function postComment() {
 
     currentUser.comments = Array.isArray(currentUser.comments) ? currentUser.comments : [];
     currentUser.comments.unshift(item);
+
     saveUserStore();
 
     if (textEl) textEl.value = '';
+
     toast('评论发布成功');
 
     if (currentCity && currentCity.name) {
@@ -570,12 +688,9 @@ function postComment() {
 }
 
 // ================================
-// 8. 🔥【只修复这里：登录系统问题】
+// 8. 登录系统
 // ================================
-
-// ✔ 修复：去掉默认填充 + 支持登录/注册分离
 function openLogin(type) {
-
     const triggerId = window.event?.target?.id;
 
     if (!type) {
@@ -587,6 +702,7 @@ function openLogin(type) {
     }
 
     const modal = document.getElementById('loginModal');
+
     if (!modal) return;
 
     modal.innerHTML = `
@@ -612,23 +728,24 @@ function openLogin(type) {
 
 function closeLogin() {
     const modal = document.getElementById('loginModal');
+
     if (modal) modal.classList.remove('show');
 }
 
 function closeProfile() {
     const modal = document.getElementById('profileModal');
+
     if (modal) modal.classList.remove('show');
 }
 
-// ✔ 遮罩关闭
 document.addEventListener("click", (e) => {
     const loginModal = document.getElementById("loginModal");
     const profileModal = document.getElementById("profileModal");
+
     if (e.target === loginModal) closeLogin();
     if (e.target === profileModal) closeProfile();
 });
 
-// ✔ 登录
 function doLogin() {
     const user = document.getElementById('loginUser').value.trim();
     const pass = document.getElementById('loginPass').value.trim();
@@ -647,7 +764,6 @@ function doLogin() {
     toast('登录成功');
 }
 
-// ✔ 注册
 function doRegister() {
     const user = document.getElementById('loginUser').value.trim();
     const pass = document.getElementById('loginPass').value.trim();
@@ -670,6 +786,7 @@ function doRegister() {
     };
 
     fakeUsers.push(newUser);
+
     saveUserStore();
 
     toast('注册成功，请登录');
@@ -680,13 +797,16 @@ function changeAvatarFromFile(input) {
     if (!currentUser) return;
 
     const file = input.files && input.files[0];
+
     if (!file) return;
 
     const reader = new FileReader();
+
     reader.onload = function(e) {
         currentUser.avatar = e.target.result;
 
         const idx = fakeUsers.findIndex(u => (u.phone || u.username) === (currentUser.phone || currentUser.username));
+
         if (idx >= 0) {
             fakeUsers[idx].avatar = currentUser.avatar;
         }
@@ -696,6 +816,7 @@ function changeAvatarFromFile(input) {
         openProfile();
         toast('头像已更新');
     };
+
     reader.readAsDataURL(file);
 }
 
@@ -706,6 +827,7 @@ function openProfile() {
     }
 
     const modal = document.getElementById('profileModal');
+
     if (!modal) return;
 
     const comments = Array.isArray(currentUser.comments) ? currentUser.comments : [];
@@ -778,12 +900,12 @@ function openProfile() {
 
 function logout() {
     currentUser = null;
+
     closeProfile();
     updateUIForLogin();
     toast('已退出登录');
 }
 
-// ✔ UI同步（不改你原结构）
 function updateUIForLogin() {
     const loginBtn = document.getElementById('loginBtn');
     const regBtn = document.getElementById('regBtn');
@@ -799,6 +921,7 @@ function updateUIForLogin() {
     if (currentUser) {
         [loginBtn, loginBtnD].forEach(b => b && (b.style.display = 'none'));
         [regBtn, regBtnD].forEach(b => b && (b.style.display = 'none'));
+
         [profileBtn, profileBtnD].forEach(b => {
             if (b) {
                 b.style.display = 'inline-flex';
@@ -832,20 +955,25 @@ function updateUIForLogin() {
 // ================================
 function initPage() {
     const tagFilters = document.getElementById("tagFilters");
+
     if (tagFilters) {
-        tagFilters.innerHTML = tags.map(t => `<button class="chip" onclick="this.classList.toggle('active')">${t}</button>`).join("");
+        tagFilters.innerHTML = tags.map(t => `<button class="chip" onclick="this.classList.toggle('active')">${esc(t)}</button>`).join("");
     }
 
     const searchBtn = document.getElementById("searchBtn");
+
     if (searchBtn) {
         searchBtn.addEventListener("click", triggerSearch);
     }
 
     const baseCityInput = document.getElementById('baseCityInput');
     const clearCityBtn = document.getElementById('clearCityBtn');
+
     if (baseCityInput && clearCityBtn) {
+        clearCityBtn.style.display = baseCityInput.value.trim().length > 0 ? 'flex' : 'none';
+
         baseCityInput.addEventListener('input', function() {
-            clearCityBtn.style.display = this.value.trim().length > 0 ? 'block' : 'none';
+            clearCityBtn.style.display = this.value.trim().length > 0 ? 'flex' : 'none';
         });
     }
 
@@ -859,13 +987,13 @@ function clearBaseCity() {
 
     if (baseCityInput) baseCityInput.value = '';
     if (clearCityBtn) clearCityBtn.style.display = 'none';
+
     triggerSearch();
 }
 
 // ============================
-// 🚀 结构桥接层（核心修复）
+// 结构桥接层
 // ============================
-// 1. 先挂载
 window.goHome = goHome;
 window.setRegion = setRegion;
 window.keywordSearch = keywordSearch;
@@ -889,5 +1017,4 @@ window.postComment = postComment;
 window.switchSort = switchSort;
 window.changeAvatarFromFile = changeAvatarFromFile;
 
-// 2. 再初始化
 window.addEventListener("DOMContentLoaded", initPage);
