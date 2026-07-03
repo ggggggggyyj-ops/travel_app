@@ -1567,26 +1567,206 @@ function clearBaseCity() {
 // ================================
 // 10. 详情页
 // ================================
+function escapeRawNewlinesInsideJsonStrings(source) {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+
+    if (inString && ch === '\n') {
+      out += '\\n';
+      continue;
+    }
+
+    if (inString && ch === '\r') {
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
+function addMissingCommasBetweenJsonObjects(source) {
+  let out = '';
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+
+    if (escaped) {
+      out += ch;
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      out += ch;
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      out += ch;
+      continue;
+    }
+
+    if (!inString && ch === '}') {
+      out += ch;
+
+      let j = i + 1;
+      let spaces = '';
+
+      while (j < source.length && /\s/.test(source[j])) {
+        spaces += source[j];
+        j++;
+      }
+
+      if (source[j] === '{') {
+        out += spaces + ',';
+        i = j - 1;
+        continue;
+      }
+
+      continue;
+    }
+
+    out += ch;
+  }
+
+  return out;
+}
+
+function normalizeBudgetPlansJsonText(value) {
+  let text = String(value ?? '').trim();
+
+  if (!text) return '';
+
+  text = text
+    .replace(/^\uFEFF/, '')
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'");
+
+  text = escapeRawNewlinesInsideJsonStrings(text);
+  text = addMissingCommasBetweenJsonObjects(text);
+
+  text = text
+    .replace(/,\s*]/g, ']')
+    .replace(/,\s*}/g, '}');
+
+  return text;
+}
+
+function parseBudgetPlansLoose(value) {
+  if (!value) return [];
+
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === 'object') {
+    return [value];
+  }
+
+  const raw = String(value).trim();
+
+  if (!raw) return [];
+
+  const tryList = [
+    raw,
+    normalizeBudgetPlansJsonText(raw),
+  ];
+
+  for (const item of tryList) {
+    try {
+      const parsed = JSON.parse(item);
+
+      if (Array.isArray(parsed)) {
+        return parsed;
+      }
+
+      if (parsed && typeof parsed === 'object') {
+        return [parsed];
+      }
+
+      if (typeof parsed === 'string' && parsed !== raw) {
+        const nested = parseBudgetPlansLoose(parsed);
+        if (nested.length) return nested;
+      }
+    } catch (e) {}
+  }
+
+  const fallback = [];
+  const normalized = normalizeText(raw);
+  const reg =
+    /"(?:name|title)"\s*:\s*"([^"]*)"\s*,\s*"(?:text|content|desc|description)"\s*:\s*"([\s\S]*?)"\s*\}/g;
+
+  let match;
+
+  while ((match = reg.exec(normalized)) !== null) {
+    fallback.push({
+      name: match[1],
+      text: match[2],
+    });
+  }
+
+  return fallback;
+}
+
 function budgetHTML(c) {
   const budgetPlans =
     c.budgetPlans || c.budget_plans || c.budget_plan || c.plan || c.plans || '';
 
-  const parsed = parseMaybeJSON(budgetPlans, null);
+  const parsed = parseBudgetPlansLoose(budgetPlans);
 
   if (Array.isArray(parsed) && parsed.length) {
     return parsed
-      .map(
-        (item, index) => `
+      .map((item, index) => {
+        const title =
+          item.name ||
+          item.title ||
+          item.plan_name ||
+          item方案 ||
+          `方案${index + 1}`;
+
+        const text =
+          item.text ||
+          item.content ||
+          item.desc ||
+          item.description ||
+          item.detail ||
+          '';
+
+        return `
             <div class="budget-item">
-                <b>${esc(item.name || item.title || `方案${index + 1}`)}</b>
-                <div style="white-space:pre-wrap;">${esc(
-                  normalizeText(
-                    item.text || item.content || item.desc || item.description || ''
-                  )
-                )}</div>
+                <b>${esc(title)}</b>
+                <div style="white-space:pre-wrap;">${esc(normalizeText(text))}</div>
             </div>
-        `
-      )
+        `;
+      })
       .join('');
   }
 
