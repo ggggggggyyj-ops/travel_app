@@ -568,6 +568,64 @@ function injectBugFixStyles() {
             display: block !important;
         }
 
+
+        .metric-badges {
+            position: absolute;
+            right: 16px;
+            top: 16px;
+            z-index: 12;
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 6px;
+            pointer-events: none;
+        }
+
+        .hero .metric-badges {
+            right: 24px;
+            top: 24px;
+        }
+
+        .metric-badge {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 26px;
+            padding: 4px 11px;
+            border-radius: 999px;
+            background: rgba(0, 0, 0, .58);
+            border: 1px solid rgba(255, 255, 255, .08);
+            color: #f5e6a8;
+            font-size: 13px;
+            line-height: 1;
+            font-weight: 900;
+            white-space: nowrap;
+            box-shadow: 0 4px 14px rgba(0,0,0,.24);
+        }
+
+        .hero .metric-badge {
+            min-height: 30px;
+            padding: 5px 13px;
+            font-size: 14px;
+        }
+
+        .comment-editor-close {
+            display: none !important;
+            width: 100%;
+            height: 38px;
+            margin-top: 8px;
+            border: 1px solid #4a5060 !important;
+            border-radius: 12px !important;
+            background: #252a36 !important;
+            color: #ddd !important;
+            font-weight: 900;
+            cursor: pointer;
+        }
+
+        .comment-form.editing .comment-editor-close {
+            display: block !important;
+        }
+
         @keyframes thinkingSpin {
             to {
                 transform: rotate(360deg);
@@ -915,9 +973,63 @@ function setHero(c, label) {
             <span class="badge gold" style="font-size:20px;padding:7px 18px !important;font-weight:900;letter-spacing:.5px;">${label}</span>
             ${scoreLabel ? `<span class="badge score-badge">评分 ${esc(scoreLabel)}</span>` : ''}
         </div>
+        ${renderMetricBadges(c)}
         <div class="intro">${esc(c.intro || `${c.name}的魅力远不止于此，更多精彩等你亲身体验。`)}</div>`;
 
   heroEl.onclick = () => openDetail(c.name);
+}
+
+
+function getSearchTitle() {
+  if (currentRegion === 'domestic') return '搜索推荐国内城市';
+  if (currentRegion === 'abroad') return '搜索推荐国外城市';
+  return '搜索推荐城市';
+}
+
+function getCityDaysLabel(c) {
+  const min = getCityDaysMin(c);
+  const max = getCityDaysMax(c);
+
+  if (min == null && max == null) return '';
+
+  if (min != null && max != null) {
+    if (min === max) return `${min}天`;
+    return `${min}-${max}天`;
+  }
+
+  if (min != null) return `${min}天起`;
+  return `${max}天内`;
+}
+
+function renderMetricBadges(c) {
+  if (mode !== 'filter' || !c) return '';
+
+  const items = [];
+  const distance = getNumber(c.distance);
+
+  if (distance != null && distance < 999999) {
+    items.push(`约${distance}km`);
+  }
+
+  const budget = getCityBudget(c);
+
+  if (budget != null) {
+    items.push(`预算约${budget}`);
+  }
+
+  const daysLabel = getCityDaysLabel(c);
+
+  if (daysLabel) {
+    items.push(daysLabel);
+  }
+
+  if (!items.length) return '';
+
+  return `
+        <div class="metric-badges">
+            ${items.map((item) => `<span class="metric-badge">${esc(item)}</span>`).join('')}
+        </div>
+    `;
 }
 
 function renderCards(list) {
@@ -940,6 +1052,7 @@ function renderCards(list) {
                         <span class="badge gold" style="font-size:18px;padding:6px 15px !important;font-weight:900;letter-spacing:.3px;">TOP ${realRank}</span>
                         ${scoreLabel ? `<span class="badge score-badge">评分 ${esc(scoreLabel)}</span>` : ''}
                     </div>
+                    ${renderMetricBadges(c)}
                     <div class="card-desc">${esc(oneLine(c))}</div>
                 </article>
             `;
@@ -1009,11 +1122,6 @@ async function triggerSearch() {
       .map((x) => x.textContent.trim())
       .filter(Boolean);
 
-    if (!baseCity && !budget && !days && selectedTags.length === 0) {
-      await goHome();
-      return;
-    }
-
     mode = 'filter';
 
     let data = [];
@@ -1029,6 +1137,8 @@ async function triggerSearch() {
       }
 
       const params = new URLSearchParams({
+        city: baseCityData.name || baseCity,
+        city_id: baseCityData.id || '',
         lat: baseCityData.lat,
         lng: baseCityData.lng,
         region: currentRegion,
@@ -1043,7 +1153,7 @@ async function triggerSearch() {
         data = await clientFallbackSearch({ baseCity, budget, days, selectedTags });
       }
 
-      showList(`从${baseCityData.name}出发 · 旅游推荐`, data, '距离最近');
+      showList(getSearchTitle(), data, '距离最近');
     } else {
       const params = new URLSearchParams({
         region: currentRegion,
@@ -1058,7 +1168,7 @@ async function triggerSearch() {
         data = await clientFallbackSearch({ baseCity, budget, days, selectedTags });
       }
 
-      showList('搜索推荐结果', data, '匹配成功');
+      showList(getSearchTitle(), data, '匹配成功');
     }
 
     if (!Array.isArray(data) || !data.length) {
@@ -1104,6 +1214,11 @@ async function setRegion(r, el) {
 
   if (el) {
     el.classList.add('active');
+  }
+
+  if (mode === 'filter') {
+    await triggerSearch();
+    return;
   }
 
   const monthLabel = getCurrentMonthLabel();
@@ -1250,6 +1365,7 @@ function chooseCity(name) {
 
   if (commentText) {
     commentText.placeholder = '';
+    ensureCommentCloseButton();
   }
 
   const baseCityInput = document.getElementById('baseCityInput');
@@ -1273,6 +1389,7 @@ function clearBaseCity() {
 
   if (commentText) {
     commentText.placeholder = '';
+    ensureCommentCloseButton();
   }
 
   const baseCityInput = document.getElementById('baseCityInput');
@@ -1472,14 +1589,36 @@ function backToList() {
 // 11. 评论系统
 // ================================
 
+function ensureCommentCloseButton() {
+  const textEl = document.getElementById('commentText');
+  const form = textEl?.closest('.comment-form');
+
+  if (!form || form.querySelector('.comment-editor-close')) return;
+
+  const closeBtn = document.createElement('button');
+  closeBtn.type = 'button';
+  closeBtn.className = 'comment-editor-close';
+  closeBtn.textContent = '关闭打字框';
+  closeBtn.onclick = resetCommentEditor;
+
+  if (textEl && textEl.nextSibling) {
+    form.insertBefore(closeBtn, textEl.nextSibling);
+  } else {
+    form.appendChild(closeBtn);
+  }
+}
+
 function resetCommentEditor() {
   const textEl = document.getElementById('commentText');
   const form = textEl?.closest('.comment-form');
-  const btn = form?.querySelector('button');
+  const submitBtn = form?.querySelector('button:not(.comment-editor-close)');
 
   if (textEl) textEl.value = '';
   if (form) form.classList.remove('editing');
-  if (btn) btn.textContent = '发布评价';
+  if (submitBtn) submitBtn.textContent = '发布评价';
+
+  const closeBtn = form?.querySelector('.comment-editor-close');
+  if (closeBtn) closeBtn.style.display = 'none';
 }
 
 function commentDomKey(commentId, source = '') {
@@ -1549,7 +1688,7 @@ function renderReplyList(comment, parentKey = '') {
               </div>
               <p>${esc(reply.content || '')}</p>
               <div class="comment-actions-row">
-                <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, ${jsArg(replyId)}, ${jsArg(reply.from_user_id || reply.user_id || '')}, ${jsArg(source)})">回复</button>
+                <button type="button" class="reply-action-btn" data-reply-comment="${esc(comment.id)}" data-reply-parent="${esc(replyId)}" data-reply-to="${esc(reply.from_user_id || reply.user_id || '')}" data-reply-source="${esc(source)}">回复</button>
               </div>
               <div id="replyBox-${esc(replyDomKey)}"></div>
               ${renderLevel(replyKey)}
@@ -1636,6 +1775,44 @@ function resetCommentScroll() {
   if (commentsPanel) commentsPanel.scrollTop = 0;
 }
 
+
+function bindCommentActions() {
+  const container = document.getElementById('commentList');
+
+  if (!container || container._commentActionsBound) return;
+
+  container._commentActionsBound = true;
+
+  container.addEventListener('click', function (e) {
+    const likeBtn = e.target.closest('[data-like-comment]');
+
+    if (likeBtn && container.contains(likeBtn)) {
+      e.preventDefault();
+      e.stopPropagation();
+      likeComment(
+        likeBtn.getAttribute('data-like-comment') || '',
+        likeBtn.getAttribute('data-like-source') || '',
+        likeBtn
+      );
+      return;
+    }
+
+    const replyBtn = e.target.closest('[data-reply-comment]');
+
+    if (replyBtn && container.contains(replyBtn)) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleReplyBox(
+        replyBtn.getAttribute('data-reply-comment') || '',
+        replyBtn.getAttribute('data-reply-parent') || '',
+        replyBtn.getAttribute('data-reply-to') || '',
+        replyBtn.getAttribute('data-reply-source') || ''
+      );
+    }
+  });
+}
+
+
 async function loadComments(cityName, sortType = 'hot') {
   const container = document.getElementById('commentList');
 
@@ -1671,8 +1848,8 @@ async function loadComments(cityName, sortType = 'hot') {
                     </div>
                     <p>${esc(comment.content || '')}</p>
                     <div class="comment-actions-row">
-                        <button class="emoji-like-btn ${liked ? 'liked' : ''}" onclick="likeComment(${jsArg(comment.id)}, ${jsArg(source)}, this)"><span class="thumb">👍</span><span class="like-count">${esc(likes)}</span></button>
-                        <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, '', ${jsArg(userId)}, ${jsArg(source)})">回复</button>
+                        <button type="button" class="emoji-like-btn ${liked ? 'liked' : ''}" data-like-comment="${esc(comment.id)}" data-like-source="${esc(source)}" data-liked="${liked ? '1' : '0'}"><span class="thumb">👍</span><span class="like-count">${esc(likes)}</span></button>
+                        <button type="button" class="reply-action-btn" data-reply-comment="${esc(comment.id)}" data-reply-parent="" data-reply-to="${esc(userId)}" data-reply-source="${esc(source)}">回复</button>
                     </div>
                     <div id="replyBox-${esc(domKey)}"></div>
                     ${renderReplyList(comment, '')}
@@ -1707,13 +1884,17 @@ async function postComment() {
     return;
   }
 
+  ensureCommentCloseButton();
+
   const textEl = document.getElementById('commentText');
   const form = textEl?.closest('.comment-form');
-  const btn = form?.querySelector('button');
+  const btn = form?.querySelector('button:not(.comment-editor-close)');
+  const closeBtn = form?.querySelector('.comment-editor-close');
 
   if (form && !form.classList.contains('editing')) {
     form.classList.add('editing');
     if (btn) btn.textContent = '发送评价';
+    if (closeBtn) closeBtn.style.display = 'block';
     setTimeout(() => textEl && textEl.focus(), 0);
     return;
   }
@@ -1774,6 +1955,7 @@ async function likeComment(commentId, source = '', btn = null) {
 
     if (targetBtn) {
       targetBtn.classList.toggle('liked', liked);
+      targetBtn.setAttribute('data-liked', liked ? '1' : '0');
     }
 
     if (countEl) {
@@ -2109,6 +2291,7 @@ function initPage() {
   injectBugFixStyles();
   bindCityGridClick();
   bindPickerClick();
+  bindCommentActions();
   loadUserFromStorage();
 
   const tagFilters = document.getElementById('tagFilters');
@@ -2132,6 +2315,7 @@ function initPage() {
 
   if (commentText) {
     commentText.placeholder = '';
+    ensureCommentCloseButton();
   }
 
   const baseCityInput = document.getElementById('baseCityInput');
@@ -2179,5 +2363,6 @@ window.changeAvatarFromFile = changeAvatarFromFile;
 window.likeComment = likeComment;
 window.toggleReplyBox = toggleReplyBox;
 window.postReply = postReply;
+window.resetCommentEditor = resetCommentEditor;
 
 window.addEventListener('DOMContentLoaded', initPage);

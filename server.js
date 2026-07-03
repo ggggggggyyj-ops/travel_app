@@ -939,7 +939,12 @@ async function searchCitiesWithFilters(region, filters, origin) {
 
                 return { ...city, distance };
             })
-            .filter(city => city.id !== origin.id && city.name !== origin.name)
+            .filter(city => {
+                const originId = Number(origin.id);
+                const cityId = Number(city.id);
+                const sameId = Number.isFinite(originId) && Number.isFinite(cityId) && cityId === originId;
+                return !sameId && city.name !== origin.name;
+            })
             .sort((a, b) => {
                 const distanceDiff = a.distance - b.distance;
                 if (distanceDiff !== 0) return distanceDiff;
