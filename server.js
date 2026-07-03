@@ -790,6 +790,14 @@ function getCityBudgetValue(city) {
     return nums.length ? Math.min(...nums) : null;
 }
 
+function getCityBudgetDiffValue(city, budgetLimit) {
+    const cityBudget = getCityBudgetValue(city);
+
+    if (cityBudget === null || !budgetLimit) return 999999;
+
+    return Math.abs(cityBudget - budgetLimit);
+}
+
 function getCityDaysRange(city) {
     const minDirect = parseDaysValue(firstFilled(city.days_min, city.min_days));
     const maxDirect = parseDaysValue(firstFilled(city.days_max, city.max_days));
@@ -824,13 +832,26 @@ function cityMatchesSearch(city, filters) {
 
     if (budgetLimit) {
         const cityBudget = getCityBudgetValue(city);
-        if (cityBudget !== null && cityBudget > budgetLimit) return false;
+
+        if (cityBudget === null) return false;
+
+        const allowedRange = Math.max(600, budgetLimit * 0.35);
+
+        if (Math.abs(cityBudget - budgetLimit) > allowedRange) return false;
     }
 
     if (daysTarget) {
         const range = getCityDaysRange(city);
-        if (range.min !== null && daysTarget < range.min) return false;
-        if (range.max !== null && daysTarget > range.max) return false;
+
+        if (range.min === null && range.max === null) return false;
+
+        if (daysTarget >= 4) {
+            if (range.max !== null && range.max < 4) return false;
+            if (range.max === null && range.min !== null && range.min < 4) return false;
+        } else {
+            if (range.min !== null && daysTarget < range.min) return false;
+            if (range.max !== null && daysTarget > range.max) return false;
+        }
     }
 
     if (tags.length) {
@@ -859,6 +880,7 @@ async function getSearchCandidateCities(region) {
 
 async function searchCitiesWithFilters(region, filters, origin) {
     let list = await getSearchCandidateCities(region);
+    const budgetLimit = numberFromText(filters.budget);
 
     list = list.filter(city => cityMatchesSearch(city, filters));
 
@@ -887,9 +909,26 @@ async function searchCitiesWithFilters(region, filters, origin) {
                 return { ...city, distance };
             })
             .filter(city => city.id !== origin.id && city.name !== origin.name)
-            .sort((a, b) => (a.distance - b.distance) || (Number(b.score || 0) - Number(a.score || 0)));
+            .sort((a, b) => {
+                const distanceDiff = a.distance - b.distance;
+                if (distanceDiff !== 0) return distanceDiff;
+
+                if (budgetLimit) {
+                    const budgetDiff = getCityBudgetDiffValue(a, budgetLimit) - getCityBudgetDiffValue(b, budgetLimit);
+                    if (budgetDiff !== 0) return budgetDiff;
+                }
+
+                return Number(b.score || 0) - Number(a.score || 0);
+            });
     } else {
-        list = list.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+        list = list.sort((a, b) => {
+            if (budgetLimit) {
+                const budgetDiff = getCityBudgetDiffValue(a, budgetLimit) - getCityBudgetDiffValue(b, budgetLimit);
+                if (budgetDiff !== 0) return budgetDiff;
+            }
+
+            return Number(b.score || 0) - Number(a.score || 0);
+        });
     }
 
     return list.slice(0, 30);
@@ -931,7 +970,9 @@ async function readCommentsFromTable(tableName, cityName, cityId, sort) {
     if (!contentCol || (!cityNameCol && !cityIdCol)) return [];
 
     const idCol = pickColumn(cols, ['id']) || 'id';
+    const userIdCol = pickColumn(cols, ['user_id', 'uid', 'author_id']);
     const userCol = pickColumn(cols, ['username', 'nickname', 'user_name', 'phone', 'author']);
+    const avatarCol = pickColumn(cols, ['avatar_url', 'avatar', 'user_avatar']);
     const likeCol = pickColumn(cols, ['like_count', 'likes', 'liked_count']);
     const timeCol = pickColumn(cols, ['created_at', 'time', 'createdAt', 'create_time', 'updated_at']);
     const statusCol = pickColumn(cols, ['status']);
@@ -939,7 +980,10 @@ async function readCommentsFromTable(tableName, cityName, cityId, sort) {
     const selectList = [
         `\`${idCol}\` AS id`,
         cityNameCol ? `\`${cityNameCol}\` AS city_name` : `NULL AS city_name`,
+        cityIdCol ? `\`${cityIdCol}\` AS city_id` : `NULL AS city_id`,
+        userIdCol ? `\`${userIdCol}\` AS user_id` : `NULL AS user_id`,
         userCol ? `\`${userCol}\` AS username` : `'游客' AS username`,
+        avatarCol ? `\`${avatarCol}\` AS avatar_url` : `NULL AS avatar_url`,
         `\`${contentCol}\` AS content`,
         likeCol ? `COALESCE(\`${likeCol}\`, 0) AS like_count` : `0 AS like_count`,
         timeCol ? `\`${timeCol}\` AS created_at` : `NULL AS created_at`,
@@ -977,6 +1021,179 @@ async function readCommentsFromTable(tableName, cityName, cityId, sort) {
     } catch (e) {
         return [];
     }
+}
+
+async function getUsersMap(userIds) {
+    const ids = [...new Set((userIds || []).map(id => Number(id)).filter(Number.isFinite))];
+    const map = new Map();
+
+    if (!ids.length) return map;
+
+    try {
+        const [rows] = await db.query(
+            `SELECT id, phone, nickname, avatar_url FROM users WHERE id IN (?)`,
+            [ids]
+        );
+
+        rows.forEach(row => {
+            map.set(Number(row.id), row);
+        });
+    } catch (e) {}
+
+    return map;
+}
+
+async function getLikedCommentSet(user, commentIds) {
+    const ids = [...new Set((commentIds || []).map(id => Number(id)).filter(Number.isFinite))];
+    const set = new Set();
+
+    if (!user || !ids.length) return set;
+
+    try {
+        const [rows] = await db.query(
+            `SELECT comment_id FROM comment_likes WHERE user_id=? AND comment_id IN (?)`,
+            [user.id, ids]
+        );
+
+        rows.forEach(row => set.add(Number(row.comment_id)));
+    } catch (e) {}
+
+    return set;
+}
+
+async function getCommentReplies(commentIds) {
+    const ids = [...new Set((commentIds || []).map(id => Number(id)).filter(Number.isFinite))];
+
+    if (!ids.length) return new Map();
+
+    const cols = await getTableColumns('comment_replies');
+    const map = new Map();
+
+    if (!cols.length) return map;
+
+    const idCol = pickColumn(cols, ['id']) || 'id';
+    const commentIdCol = pickColumn(cols, ['comment_id', 'commentId']);
+    const parentCol = pickColumn(cols, ['parent_reply_id', 'parent_id', 'reply_to_id']);
+    const fromCol = pickColumn(cols, ['from_user_id', 'user_id', 'uid']);
+    const toCol = pickColumn(cols, ['to_user_id']);
+    const contentCol = pickColumn(cols, ['content', 'reply', 'text', 'body']);
+    const timeCol = pickColumn(cols, ['created_at', 'time', 'createdAt', 'create_time', 'updated_at']);
+    const statusCol = pickColumn(cols, ['status']);
+
+    if (!commentIdCol || !fromCol || !contentCol) return map;
+
+    let sql = `
+        SELECT
+            r.\`${idCol}\` AS id,
+            r.\`${commentIdCol}\` AS comment_id,
+            ${parentCol ? `r.\`${parentCol}\`` : 'NULL'} AS parent_reply_id,
+            r.\`${fromCol}\` AS from_user_id,
+            ${toCol ? `r.\`${toCol}\`` : 'NULL'} AS to_user_id,
+            r.\`${contentCol}\` AS content,
+            ${timeCol ? `r.\`${timeCol}\`` : 'NULL'} AS created_at,
+            COALESCE(fu.nickname, fu.phone, '用户') AS from_username,
+            fu.avatar_url AS from_avatar,
+            COALESCE(tu.nickname, tu.phone, '') AS to_username,
+            tu.avatar_url AS to_avatar
+        FROM comment_replies r
+        LEFT JOIN users fu ON r.\`${fromCol}\` = fu.id
+        LEFT JOIN users tu ON ${toCol ? `r.\`${toCol}\`` : 'NULL'} = tu.id
+        WHERE r.\`${commentIdCol}\` IN (?)
+    `;
+
+    if (statusCol) {
+        sql += ` AND (r.\`${statusCol}\`=1 OR r.\`${statusCol}\`='1' OR r.\`${statusCol}\`='active')`;
+    }
+
+    sql += ` ORDER BY ${timeCol ? `r.\`${timeCol}\`` : `r.\`${idCol}\``} ASC`;
+
+    try {
+        const [rows] = await db.query(sql, [ids]);
+
+        rows.forEach(row => {
+            const key = Number(row.comment_id);
+            if (!map.has(key)) map.set(key, []);
+            map.get(key).push(row);
+        });
+    } catch (e) {}
+
+    return map;
+}
+
+async function adjustCommentLikeCount(commentId, source, delta) {
+    const tables = source ? [source] : ['user_comments', 'travel_comments', 'comments', 'city_comments'];
+
+    for (const tableName of tables) {
+        if (!/^[a-zA-Z0-9_]+$/.test(tableName)) continue;
+
+        const cols = await getTableColumns(tableName);
+        if (!cols.length || !cols.includes('id')) continue;
+
+        const likeCol = pickColumn(cols, ['like_count', 'likes', 'liked_count']);
+        if (!likeCol) continue;
+
+        try {
+            await db.query(
+                `UPDATE \`${tableName}\` SET \`${likeCol}\`=GREATEST(COALESCE(\`${likeCol}\`,0)+?,0) WHERE id=?`,
+                [delta, commentId]
+            );
+        } catch (e) {}
+    }
+}
+
+async function getCommentLikeCount(commentId, source) {
+    const tables = source ? [source] : ['user_comments', 'travel_comments', 'comments', 'city_comments'];
+
+    for (const tableName of tables) {
+        if (!/^[a-zA-Z0-9_]+$/.test(tableName)) continue;
+
+        const cols = await getTableColumns(tableName);
+        if (!cols.length || !cols.includes('id')) continue;
+
+        const likeCol = pickColumn(cols, ['like_count', 'likes', 'liked_count']);
+        if (!likeCol) continue;
+
+        try {
+            const [rows] = await db.query(
+                `SELECT COALESCE(\`${likeCol}\`,0) AS like_count FROM \`${tableName}\` WHERE id=? LIMIT 1`,
+                [commentId]
+            );
+
+            if (rows[0]) return Number(rows[0].like_count || 0);
+        } catch (e) {}
+    }
+
+    try {
+        const [rows] = await db.query(
+            `SELECT COUNT(*) AS cnt FROM comment_likes WHERE comment_id=?`,
+            [commentId]
+        );
+
+        return Number(rows[0]?.cnt || 0);
+    } catch (e) {
+        return 0;
+    }
+}
+
+async function findCommentOwner(commentId) {
+    for (const tableName of ['user_comments', 'travel_comments', 'comments', 'city_comments']) {
+        const cols = await getTableColumns(tableName);
+        if (!cols.length || !cols.includes('id')) continue;
+
+        const userIdCol = pickColumn(cols, ['user_id', 'uid', 'author_id']);
+        if (!userIdCol) continue;
+
+        try {
+            const [rows] = await db.query(
+                `SELECT \`${userIdCol}\` AS user_id FROM \`${tableName}\` WHERE id=? LIMIT 1`,
+                [commentId]
+            );
+
+            if (rows[0]?.user_id) return Number(rows[0].user_id);
+        } catch (e) {}
+    }
+
+    return null;
 }
 
 /* =========================
@@ -1402,6 +1619,7 @@ app.get('/api/comments', async (req, res) => {
     try {
         const city = String(req.query.city || req.query.city_name || '').trim();
         const sort = req.query.sort === 'new' ? 'new' : 'hot';
+        const viewer = await findUserByIdentifier(req.query).catch(() => null);
 
         if (!city) {
             return res.json([]);
@@ -1421,10 +1639,42 @@ app.get('/api/comments', async (req, res) => {
             readCommentsFromTable('city_comments', city, cityId, sort)
         ]);
 
-        let rows = commentGroups.flat();
+        let rows = commentGroups.flat().filter(row => row && row.content);
+
+        const commentIds = rows.map(row => row.id).filter(Boolean);
+        const userIds = rows.map(row => row.user_id).filter(Boolean);
+        const usersMap = await getUsersMap(userIds);
+        const likedSet = await getLikedCommentSet(viewer, commentIds);
+        const repliesMap = await getCommentReplies(commentIds);
 
         rows = rows
-            .filter(row => row && row.content)
+            .map(row => {
+                const user = row.user_id ? usersMap.get(Number(row.user_id)) : null;
+                const username = user
+                    ? (user.nickname || user.phone || row.username || '游客')
+                    : (row.username || '游客');
+                const avatarUrl = user
+                    ? (user.avatar_url || DEFAULT_AVATAR)
+                    : (row.avatar_url || DEFAULT_AVATAR);
+
+                return {
+                    id: row.id,
+                    city_name: row.city_name || city,
+                    city_id: row.city_id || cityId,
+                    user_id: row.user_id || null,
+                    username,
+                    nickname: username,
+                    avatar: avatarUrl,
+                    avatar_url: avatarUrl,
+                    content: row.content,
+                    likes: Number(row.like_count || 0),
+                    like_count: Number(row.like_count || 0),
+                    liked_by_me: likedSet.has(Number(row.id)),
+                    created_at: row.created_at || null,
+                    source: row.source || '',
+                    replies: repliesMap.get(Number(row.id)) || []
+                };
+            })
             .sort((a, b) => {
                 if (sort === 'new') {
                     return new Date(b.created_at || 0) - new Date(a.created_at || 0);
@@ -1437,16 +1687,7 @@ app.get('/api/comments', async (req, res) => {
             })
             .slice(0, 100);
 
-        res.json(rows.map(row => ({
-            id: row.id,
-            city_name: row.city_name || city,
-            username: row.username || '游客',
-            content: row.content,
-            likes: row.like_count || 0,
-            like_count: row.like_count || 0,
-            created_at: row.created_at || null,
-            source: row.source || ''
-        })));
+        res.json(rows);
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1476,7 +1717,7 @@ app.post('/api/comments', async (req, res) => {
         );
 
         const [rows] = await db.query(
-            `SELECT uc.id, uc.city_name, COALESCE(u.nickname, u.phone) AS username, uc.content, uc.like_count, uc.created_at FROM user_comments uc LEFT JOIN users u ON uc.user_id=u.id WHERE uc.id=? LIMIT 1`,
+            `SELECT uc.id, uc.city_name, uc.user_id, COALESCE(u.nickname, u.phone) AS username, u.avatar_url, uc.content, uc.like_count, uc.created_at FROM user_comments uc LEFT JOIN users u ON uc.user_id=u.id WHERE uc.id=? LIMIT 1`,
             [result.insertId]
         );
 
@@ -1490,6 +1731,7 @@ app.post('/api/comments/like', async (req, res) => {
     try {
         const user = await findUserByIdentifier(req.body);
         const commentId = req.body.comment_id || req.body.commentId;
+        const source = String(req.body.source || '').trim();
 
         if (!user) {
             return res.status(401).json({ error: '请先登录' });
@@ -1499,22 +1741,35 @@ app.post('/api/comments/like', async (req, res) => {
             return res.status(400).json({ error: '缺少评论ID' });
         }
 
-        await db.query(
-            `INSERT IGNORE INTO comment_likes (user_id, comment_id) VALUES (?, ?)`,
+        const [exists] = await db.query(
+            `SELECT id FROM comment_likes WHERE user_id=? AND comment_id=? LIMIT 1`,
             [user.id, commentId]
         );
 
-        await db.query(
-            `UPDATE user_comments SET like_count=(SELECT COUNT(*) FROM comment_likes WHERE comment_id=?) WHERE id=?`,
-            [commentId, commentId]
-        );
+        let liked;
+        let delta;
 
-        const [rows] = await db.query(
-            `SELECT like_count FROM user_comments WHERE id=? LIMIT 1`,
-            [commentId]
-        );
+        if (exists.length) {
+            await db.query(
+                `DELETE FROM comment_likes WHERE user_id=? AND comment_id=?`,
+                [user.id, commentId]
+            );
+            liked = false;
+            delta = -1;
+        } else {
+            await db.query(
+                `INSERT INTO comment_likes (user_id, comment_id) VALUES (?, ?)`,
+                [user.id, commentId]
+            );
+            liked = true;
+            delta = 1;
+        }
 
-        res.json({ ok: true, like_count: rows[0]?.like_count || 0 });
+        await adjustCommentLikeCount(commentId, source, delta);
+
+        const likeCount = await getCommentLikeCount(commentId, source);
+
+        res.json({ ok: true, liked, like_count: likeCount });
     } catch (err) {
         res.status(500).json({ error: err.message });
     }
@@ -1522,20 +1777,58 @@ app.post('/api/comments/like', async (req, res) => {
 
 app.post('/api/comments/reply', async (req, res) => {
     try {
-        const fromUser = await findUserByIdentifier({ user_id: req.body.from_user_id || req.body.fromUserId, phone: req.body.from_phone });
-        const toUser = await findUserByIdentifier({ user_id: req.body.to_user_id || req.body.toUserId, phone: req.body.to_phone });
+        const fromUser = await findUserByIdentifier(req.body);
         const commentId = req.body.comment_id || req.body.commentId;
+        const parentReplyId = req.body.parent_reply_id || req.body.parentReplyId || null;
         const content = String(req.body.content || '').trim();
 
         if (!fromUser) return res.status(401).json({ error: '请先登录' });
-        if (!toUser) return res.status(404).json({ error: '被回复用户不存在' });
         if (!commentId) return res.status(400).json({ error: '缺少评论ID' });
         if (!content) return res.status(400).json({ error: '请输入回复内容' });
 
-        const [result] = await db.query(
-            `INSERT INTO comment_replies (comment_id, from_user_id, to_user_id, content) VALUES (?, ?, ?, ?)`,
-            [commentId, fromUser.id, toUser.id, content]
-        );
+        const cols = await getTableColumns('comment_replies');
+
+        if (!cols.length) {
+            return res.status(500).json({ error: '评论回复表不存在' });
+        }
+
+        const commentIdCol = pickColumn(cols, ['comment_id', 'commentId']);
+        const parentCol = pickColumn(cols, ['parent_reply_id', 'parent_id', 'reply_to_id']);
+        const fromCol = pickColumn(cols, ['from_user_id', 'user_id', 'uid']);
+        const toCol = pickColumn(cols, ['to_user_id']);
+        const contentCol = pickColumn(cols, ['content', 'reply', 'text', 'body']);
+
+        if (!commentIdCol || !fromCol || !contentCol) {
+            return res.status(500).json({ error: '评论回复表字段不完整' });
+        }
+
+        let toUserId = req.body.to_user_id || req.body.toUserId || null;
+
+        if (!toUserId) {
+            toUserId = await findCommentOwner(commentId);
+        }
+
+        if (!toUserId) {
+            toUserId = fromUser.id;
+        }
+
+        const insertCols = [commentIdCol, fromCol, contentCol];
+        const values = [commentId, fromUser.id, content];
+
+        if (toCol) {
+            insertCols.push(toCol);
+            values.push(toUserId);
+        }
+
+        if (parentCol && parentReplyId) {
+            insertCols.push(parentCol);
+            values.push(parentReplyId);
+        }
+
+        const placeholders = insertCols.map(() => '?').join(', ');
+        const sql = `INSERT INTO comment_replies (${insertCols.map(col => `\`${col}\``).join(', ')}) VALUES (${placeholders})`;
+
+        const [result] = await db.query(sql, values);
 
         res.json({ ok: true, reply_id: result.insertId });
     } catch (err) {

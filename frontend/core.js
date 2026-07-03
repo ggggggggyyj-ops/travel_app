@@ -200,6 +200,37 @@ function getNumber(value) {
   return match ? Number(match[0]) : null;
 }
 
+
+function isValidPhone(phone) {
+  return /^1[3-9]\d{9}$/.test(String(phone || '').trim());
+}
+
+function parseDaysTarget(value) {
+  if (value == null || value === '') return null;
+
+  const text = String(value);
+  const match = text.match(/(\d+)/);
+
+  return match ? Number(match[1]) : null;
+}
+
+function getCityScoreLabel(c) {
+  const score = getNumber(c?.score ?? c?.rating ?? c?.rate ?? c?.recommend_score);
+
+  if (score == null) return '';
+
+  return score.toFixed(2).replace(/\.00$/, '.0');
+}
+
+function getBudgetDiff(c, budget) {
+  const cityBudget = getCityBudget(c);
+  const target = getNumber(budget);
+
+  if (cityBudget == null || target == null) return 999999;
+
+  return Math.abs(cityBudget - target);
+}
+
 function getCurrentMonthLabel() {
   const monthMap = [
     '1月',
@@ -374,6 +405,125 @@ function injectBugFixStyles() {
             background: rgba(255,255,255,.04);
             color: rgba(255,255,255,.86);
             font-weight: 700;
+        }
+
+
+        .score-badge {
+            font-size: 13px !important;
+            padding: 4px 11px !important;
+            border-radius: 999px !important;
+            color: #f5e6a8 !important;
+            background: rgba(0,0,0,.54) !important;
+        }
+
+        .comment-head-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 8px;
+        }
+
+        .comment-avatar-img {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            object-fit: cover;
+            flex: 0 0 auto;
+            border: 1px solid rgba(245,211,130,.35);
+            background: #343845;
+        }
+
+        .comment-user-line {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            min-width: 0;
+        }
+
+        .comment-time {
+            font-size: 12px;
+            color: rgba(255,255,255,.48);
+        }
+
+        .comment-actions-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-top: 10px;
+        }
+
+        .emoji-like-btn,
+        .reply-action-btn {
+            border: 0;
+            background: transparent;
+            color: #f5d382;
+            cursor: pointer;
+            font-weight: 900;
+            padding: 0;
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .emoji-like-btn .thumb {
+            filter: grayscale(1);
+            opacity: .62;
+        }
+
+        .emoji-like-btn.liked .thumb {
+            filter: grayscale(0);
+            opacity: 1;
+        }
+
+        .reply-list {
+            margin-top: 12px;
+            margin-left: 42px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .reply-item {
+            background: rgba(255,255,255,.045);
+            border-left: 3px solid rgba(245,211,130,.46);
+            border-radius: 12px;
+            padding: 10px 12px;
+        }
+
+        .reply-item p {
+            margin: 6px 0 0;
+            font-size: 14px;
+            line-height: 1.55;
+        }
+
+        .reply-editor {
+            margin-top: 10px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .reply-editor input {
+            flex: 1;
+            height: 36px;
+            border-radius: 10px;
+            border: 1px solid #4a5060;
+            background: #252a36;
+            color: #fff;
+            padding: 0 10px;
+            outline: none;
+        }
+
+        .reply-editor button {
+            width: auto;
+            height: 36px;
+            margin: 0;
+            border-radius: 10px;
+            padding: 0 14px;
+            font-size: 14px;
+        }
+
+        #commentText::placeholder {
+            color: transparent !important;
         }
 
         @keyframes thinkingSpin {
@@ -565,28 +715,39 @@ function cityMatchesTags(c, selectedTags) {
 }
 
 function cityMatchesBudget(c, budget) {
-  if (!budget) return true;
+  const target = getNumber(budget);
+
+  if (!target) return true;
 
   const cityBudget = getCityBudget(c);
 
-  if (cityBudget == null) return true;
+  if (cityBudget == null) return false;
 
-  return cityBudget <= Number(budget);
+  const range = Math.max(600, target * 0.35);
+
+  return Math.abs(cityBudget - target) <= range;
 }
 
 function cityMatchesDays(c, days) {
-  if (!days) return true;
+  const target = parseDaysTarget(days);
 
-  const target = Number(days);
+  if (!target) return true;
+
   const min = getCityDaysMin(c);
   const max = getCityDaysMax(c);
 
-  if (min == null && max == null) return true;
+  if (min == null && max == null) return false;
+
+  if (target >= 4) {
+    if (max != null) return max >= 4;
+    return min != null && min >= 4;
+  }
+
   if (min != null && max != null) return min <= target && target <= max;
   if (min != null) return min <= target;
   if (max != null) return target <= max;
 
-  return true;
+  return false;
 }
 
 async function getAllCitiesForSearch(region = 'all') {
@@ -672,7 +833,15 @@ async function clientFallbackSearch({ baseCity, budget, days, selectedTags }) {
       }
     }
   } else {
-    result = result.sort((a, b) => Number(b.score || 0) - Number(a.score || 0));
+    const targetBudget = getNumber(budget);
+    result = result.sort((a, b) => {
+      if (targetBudget) {
+        const diff = getBudgetDiff(a, targetBudget) - getBudgetDiff(b, targetBudget);
+        if (diff !== 0) return diff;
+      }
+
+      return Number(b.score || 0) - Number(a.score || 0);
+    });
   }
 
   return result.slice(0, 30);
@@ -695,11 +864,14 @@ function setHero(c, label) {
 
   if (!heroEl || !c) return;
 
+  const scoreLabel = getCityScoreLabel(c);
+
   heroEl.innerHTML =
     scene(c) +
     `
         <div class="badges">
             <span class="badge gold" style="font-size:20px;padding:7px 18px !important;font-weight:900;letter-spacing:.5px;">${label}</span>
+            ${scoreLabel ? `<span class="badge score-badge">评分 ${esc(scoreLabel)}</span>` : ''}
         </div>
         <div class="intro">${esc(c.intro || `${c.name}的魅力远不止于此，更多精彩等你亲身体验。`)}</div>`;
 
@@ -717,12 +889,14 @@ function renderCards(list) {
     ? list
         .map((c, i) => {
           const realRank = i + 1;
+          const scoreLabel = getCityScoreLabel(c);
 
           return `
                 <article class="card" data-city-name="${esc(c.name)}">
                     ${scene(c)}
                     <div class="badges">
                         <span class="badge gold" style="font-size:18px;padding:6px 15px !important;font-weight:900;letter-spacing:.3px;">TOP ${realRank}</span>
+                        ${scoreLabel ? `<span class="badge score-badge">评分 ${esc(scoreLabel)}</span>` : ''}
                     </div>
                     <div class="card-desc">${esc(oneLine(c))}</div>
                 </article>
@@ -1030,6 +1204,12 @@ function bindPickerClick() {
 }
 
 function chooseCity(name) {
+  const commentText = document.getElementById('commentText');
+
+  if (commentText) {
+    commentText.placeholder = '';
+  }
+
   const baseCityInput = document.getElementById('baseCityInput');
   const clearCityBtn = document.getElementById('clearCityBtn');
 
@@ -1047,6 +1227,12 @@ function chooseCity(name) {
 }
 
 function clearBaseCity() {
+  const commentText = document.getElementById('commentText');
+
+  if (commentText) {
+    commentText.placeholder = '';
+  }
+
   const baseCityInput = document.getElementById('baseCityInput');
   const clearCityBtn = document.getElementById('clearCityBtn');
 
@@ -1060,30 +1246,13 @@ function clearBaseCity() {
 // 10. 详情页
 // ================================
 function budgetHTML(c) {
-  const score = c.score || c.rating || '暂无';
-  const budget = c.budget || c.budget_max || c.avg_budget || '暂无';
-  const daysMin = c.days_min || c.min_days || '';
-  const daysMax = c.days_max || c.max_days || '';
-  const typeText =
-    splitItems(c.tags || c.type || c.types || c.travel_type || c.tourism_type).join(
-      '、'
-    ) || '暂无';
   const budgetPlans =
     c.budgetPlans || c.budget_plans || c.budget_plan || c.plan || c.plans || '';
-
-  let html = `
-        <div class="detail-meta-grid">
-            <span>评分：${esc(score)}</span>
-            <span>预算：${esc(budget)}</span>
-            <span>天数：${esc(daysMin || '不限')}${daysMax ? `-${esc(daysMax)}` : ''}</span>
-            <span>类型：${esc(typeText)}</span>
-        </div>
-    `;
 
   const parsed = parseMaybeJSON(budgetPlans, null);
 
   if (Array.isArray(parsed) && parsed.length) {
-    html += parsed
+    return parsed
       .map(
         (item, index) => `
             <div class="budget-item">
@@ -1097,12 +1266,13 @@ function budgetHTML(c) {
         `
       )
       .join('');
-  } else if (normalizeText(budgetPlans)) {
-    html +=
-      `<div class="budget-item" style="white-space:pre-wrap;">${esc(normalizeText(budgetPlans))}</div>`;
   }
 
-  return html;
+  if (normalizeText(budgetPlans)) {
+    return `<div class="budget-item" style="white-space:pre-wrap;">${esc(normalizeText(budgetPlans))}</div>`;
+  }
+
+  return `<div class="budget-item">暂无具体方案。</div>`;
 }
 
 async function openDetail(n) {
@@ -1254,9 +1424,143 @@ function backToList() {
   }, 0);
 }
 
+
 // ================================
 // 11. 评论系统
 // ================================
+function currentUserQuery() {
+  if (!currentUser) return '';
+
+  const params = new URLSearchParams();
+
+  if (currentUser.id) params.set('user_id', currentUser.id);
+  if (currentUser.phone) params.set('phone', currentUser.phone);
+
+  const text = params.toString();
+
+  return text ? `&${text}` : '';
+}
+
+function commentAvatar(comment) {
+  return normalizeImageUrl(comment.avatar_url || comment.avatar || DEFAULT_AVATAR);
+}
+
+function buildReplyTree(replies) {
+  const list = Array.isArray(replies) ? replies : [];
+  const byParent = {};
+
+  list.forEach((reply) => {
+    const parent = reply.parent_reply_id || reply.parent_id || '';
+
+    if (!byParent[parent]) byParent[parent] = [];
+    byParent[parent].push(reply);
+  });
+
+  return byParent;
+}
+
+function renderReplyList(comment, parentKey = '') {
+  const byParent = buildReplyTree(comment.replies || []);
+
+  function renderLevel(key) {
+    const replies = byParent[key] || [];
+
+    if (!replies.length) return '';
+
+    return `
+      <div class="reply-list">
+        ${replies.map((reply) => {
+          const replyId = reply.id || '';
+          const fromName = reply.from_username || reply.username || reply.from || '用户';
+          const toName = reply.to_username || reply.to || '';
+          const fromAvatar = normalizeImageUrl(reply.from_avatar || reply.avatar_url || reply.avatar || DEFAULT_AVATAR);
+          const time = formatTime(reply.created_at || reply.time || '');
+
+          return `
+            <div class="reply-item" id="reply-${esc(replyId)}">
+              <div class="comment-head-row">
+                <img class="comment-avatar-img" src="${esc(fromAvatar)}">
+                <div class="comment-user-line">
+                  <b>${esc(fromName)}${toName ? ` 回复 ${esc(toName)}` : ''}</b>
+                  <span class="comment-time">${esc(time)}</span>
+                </div>
+              </div>
+              <p>${esc(reply.content || '')}</p>
+              <div class="comment-actions-row">
+                <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, ${jsArg(replyId)}, ${jsArg(reply.from_user_id || reply.user_id || '')})">回复</button>
+              </div>
+              <div id="replyBox-${esc(comment.id)}-${esc(replyId)}"></div>
+              ${renderLevel(String(replyId))}
+            </div>
+          `;
+        }).join('')}
+      </div>
+    `;
+  }
+
+  return renderLevel(parentKey);
+}
+
+function toggleReplyBox(commentId, parentReplyId = '', toUserId = '') {
+  if (!currentUser) {
+    openLogin('login');
+    return;
+  }
+
+  const boxId = `replyBox-${commentId}-${parentReplyId || ''}`;
+  const box = document.getElementById(boxId);
+
+  if (!box) return;
+
+  if (box.innerHTML.trim()) {
+    box.innerHTML = '';
+    return;
+  }
+
+  box.innerHTML = `
+    <div class="reply-editor">
+      <input id="replyInput-${esc(commentId)}-${esc(parentReplyId || '')}" placeholder="写下回复...">
+      <button onclick="postReply(${jsArg(commentId)}, ${jsArg(parentReplyId || '')}, ${jsArg(toUserId || '')})">回复</button>
+    </div>
+  `;
+
+  setTimeout(() => {
+    const input = document.getElementById(`replyInput-${commentId}-${parentReplyId || ''}`);
+    if (input) input.focus();
+  }, 0);
+}
+
+async function postReply(commentId, parentReplyId = '', toUserId = '') {
+  if (!currentUser) {
+    openLogin('login');
+    return;
+  }
+
+  const input = document.getElementById(`replyInput-${commentId}-${parentReplyId || ''}`);
+  const content = (input?.value || '').trim();
+
+  if (!content) {
+    toast('请输入回复内容');
+    return;
+  }
+
+  const result = await postJSON('/api/comments/reply', {
+    user_id: currentUser.id,
+    phone: currentUser.phone,
+    comment_id: commentId,
+    parent_reply_id: parentReplyId || null,
+    to_user_id: toUserId || null,
+    content
+  });
+
+  if (result && result.ok) {
+    toast('回复成功');
+    loadComments(currentCity.name, currentCommentSort);
+  } else {
+    toast(result?.error || '回复失败');
+  }
+}
+
 async function loadComments(cityName, sortType = 'hot') {
   const container = document.getElementById('commentList');
 
@@ -1265,7 +1569,7 @@ async function loadComments(cityName, sortType = 'hot') {
   currentCommentSort = sortType;
 
   const data = await fetchData(
-    `/api/comments?city=${encodeURIComponent(cityName)}&sort=${sortType}`
+    `/api/comments?city=${encodeURIComponent(cityName)}&sort=${sortType}${currentUserQuery()}`
   );
   const comments = Array.isArray(data) ? data : [];
 
@@ -1274,17 +1578,27 @@ async function loadComments(cityName, sortType = 'hot') {
         .map((comment) => {
           const likes = comment.likes ?? comment.like_count ?? 0;
           const time = comment.created_at || comment.time || comment.createdAt || '';
+          const liked = Boolean(comment.liked_by_me);
+          const avatar = commentAvatar(comment);
+          const userName = comment.username || comment.nickname || comment.phone || '游客';
+          const userId = comment.user_id || '';
 
           return `
-                <div class="comment-item">
-                    <b>${esc(comment.username || comment.phone || '游客')}</b>
-                    <p>${esc(comment.content || '')}</p>
-                    <div class="comment-meta">
-                        <span>${esc(formatTime(time))}</span>
-                        <button class="comment-like-btn" onclick="likeComment(${jsArg(
-                          comment.id
-                        )})">点赞 ${esc(likes)}</button>
+                <div class="comment-item" id="comment-${esc(comment.id)}">
+                    <div class="comment-head-row">
+                        <img class="comment-avatar-img" src="${esc(avatar)}">
+                        <div class="comment-user-line">
+                            <b>${esc(userName)}</b>
+                            <span class="comment-time">${esc(formatTime(time))}</span>
+                        </div>
                     </div>
+                    <p>${esc(comment.content || '')}</p>
+                    <div class="comment-actions-row">
+                        <button class="emoji-like-btn ${liked ? 'liked' : ''}" onclick="likeComment(${jsArg(comment.id)}, ${jsArg(comment.source || '')})"><span class="thumb">👍</span><span>${esc(likes)}</span></button>
+                        <button class="reply-action-btn" onclick="toggleReplyBox(${jsArg(comment.id)}, '', ${jsArg(userId)})">回复</button>
+                    </div>
+                    <div id="replyBox-${esc(comment.id)}-"></div>
+                    ${renderReplyList(comment, '')}
                 </div>
             `;
         })
@@ -1336,7 +1650,7 @@ async function postComment() {
   }
 }
 
-async function likeComment(commentId) {
+async function likeComment(commentId, source = '') {
   if (!currentUser) {
     openLogin('login');
     return;
@@ -1348,6 +1662,7 @@ async function likeComment(commentId) {
     user_id: currentUser.id,
     phone: currentUser.phone,
     comment_id: commentId,
+    source
   });
 
   if (result && result.ok) {
@@ -1695,6 +2010,12 @@ function initPage() {
     searchBtn.addEventListener('click', triggerSearch);
   }
 
+  const commentText = document.getElementById('commentText');
+
+  if (commentText) {
+    commentText.placeholder = '';
+  }
+
   const baseCityInput = document.getElementById('baseCityInput');
   const clearCityBtn = document.getElementById('clearCityBtn');
 
@@ -1738,5 +2059,7 @@ window.postComment = postComment;
 window.switchSort = switchSort;
 window.changeAvatarFromFile = changeAvatarFromFile;
 window.likeComment = likeComment;
+window.toggleReplyBox = toggleReplyBox;
+window.postReply = postReply;
 
 window.addEventListener('DOMContentLoaded', initPage);
