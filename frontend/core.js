@@ -138,22 +138,27 @@ function normalizeText(value) {
   if (value == null) return '';
 
   if (Array.isArray(value)) {
-    return value.join('、');
+    return value.map((item) => normalizeText(item)).filter(Boolean).join('、');
   }
 
   const parsed = parseMaybeJSON(value, null);
 
   if (Array.isArray(parsed)) {
-    return parsed.join('、');
+    return parsed.map((item) => normalizeText(item)).filter(Boolean).join('、');
   }
 
   if (parsed && typeof parsed === 'object') {
-    return Object.values(parsed).join(' ');
+    return Object.values(parsed).map((item) => normalizeText(item)).filter(Boolean).join(' ');
   }
 
   return String(value)
     .replace(/\\r\\n/g, '\n')
     .replace(/\\n/g, '\n')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]*\\[ \t]*(?=\n|$)/g, '\n')
+    .replace(/[ \t]*\\[ \t]*(?=(行程|Day\s*\d|交通|住宿|第\s*\d\s*天))/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -216,10 +221,20 @@ function parseDaysTarget(value) {
 
 function getCityScoreLabel(c) {
   const score = getNumber(c?.score ?? c?.rating ?? c?.rate ?? c?.recommend_score);
+  const heat = getNumber(c?.heat ?? c?.hot ?? c?.popularity);
 
-  if (score == null) return '';
+  if (score == null && heat == null) return '';
 
-  return score.toFixed(2).replace(/\.00$/, '.0');
+  let finalScore = score;
+
+  if (score != null && heat != null) {
+    const heatScore = Math.max(0, Math.min(10, heat / 1000));
+    finalScore = score * 0.7 + heatScore * 0.3;
+  } else if (score == null && heat != null) {
+    finalScore = Math.max(0, Math.min(10, heat / 1000));
+  }
+
+  return Number(finalScore).toFixed(2);
 }
 
 function getBudgetDiff(c, budget) {
@@ -1030,7 +1045,7 @@ function setHero(c, label) {
     `
         <div class="badges">
             <span class="badge gold" style="font-size:20px;padding:7px 18px !important;font-weight:900;letter-spacing:.5px;">${label}</span>
-            ${scoreLabel ? `<span class="badge score-badge">评分 ${esc(scoreLabel)}</span>` : ''}
+            ${scoreLabel ? `<span class="badge score-badge">🔥${esc(scoreLabel)}</span>` : ''}
         </div>
         ${renderMetricBadges(c)}
         <div class="intro">${esc(c.intro || `${c.name}的魅力远不止于此，更多精彩等你亲身体验。`)}</div>`;
@@ -1128,7 +1143,7 @@ function renderCards(list) {
                     ${scene(c)}
                     <div class="badges">
                         <span class="badge gold" style="font-size:18px;padding:6px 15px !important;font-weight:900;letter-spacing:.3px;">TOP ${realRank}</span>
-                        ${scoreLabel ? `<span class="badge score-badge">评分 ${esc(scoreLabel)}</span>` : ''}
+                        ${scoreLabel ? `<span class="badge score-badge">🔥${esc(scoreLabel)}</span>` : ''}
                     </div>
                     ${renderMetricBadges(c)}
                     <div class="card-desc">${esc(oneLine(c))}</div>
@@ -1680,6 +1695,78 @@ function normalizeBudgetPlansJsonText(value) {
   return text;
 }
 
+function extractJsonObjectTexts(source) {
+  const text = String(source || '');
+  const objects = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+
+    if (ch === '\\') {
+      escaped = true;
+      continue;
+    }
+
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+
+    if (inString) continue;
+
+    if (ch === '{') {
+      if (depth === 0) start = i;
+      depth++;
+      continue;
+    }
+
+    if (ch === '}') {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        objects.push(text.slice(start, i + 1));
+        start = -1;
+      }
+    }
+  }
+
+  return objects;
+}
+
+function isBadPlanText(value) {
+  const text = normalizeText(value);
+
+  if (!text) return true;
+  if (/^(null|undefined)$/i.test(text)) return true;
+  if (/�{2,}|\?{6,}/.test(text)) return true;
+
+  return false;
+}
+
+function cleanPlanText(value) {
+  return normalizeText(value)
+    .replace(/[ \t]*\\[ \t]*/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .replace(/^[\s,，;；。]+/g, '')
+    .trim();
+}
+
+function looksLikeJsonPlanBlob(value) {
+  const text = String(value || '').trim();
+
+  if (!text) return false;
+
+  return /^[\[{]/.test(text) || (/[{}[\]]/.test(text) && /"(name|title|text|content|desc|description|detail)"/.test(text));
+}
+
 function parseBudgetPlansLoose(value) {
   if (!value) return [];
 
@@ -1720,9 +1807,39 @@ function parseBudgetPlansLoose(value) {
   }
 
   const fallback = [];
-  const normalized = normalizeText(raw);
+  const normalized = normalizeBudgetPlansJsonText(raw);
+  const objectTexts = extractJsonObjectTexts(normalized);
+
+  objectTexts.forEach((objectText) => {
+    const candidates = [objectText, normalizeBudgetPlansJsonText(objectText)];
+
+    for (const candidate of candidates) {
+      try {
+        const parsed = JSON.parse(candidate);
+        if (parsed && typeof parsed === 'object') {
+          fallback.push(parsed);
+          return;
+        }
+      } catch (e) {}
+    }
+
+    const nameMatch = objectText.match(/"(?:name|title|plan_name)"\s*:\s*"([\s\S]*?)"/);
+    const textMatch = objectText.match(/"(?:text|content|desc|description|detail)"\s*:\s*"([\s\S]*?)"/);
+
+    if (nameMatch || textMatch) {
+      fallback.push({
+        name: nameMatch ? nameMatch[1] : '',
+        text: textMatch ? textMatch[1] : '',
+      });
+    }
+  });
+
+  if (fallback.length) {
+    return fallback;
+  }
+
   const reg =
-    /"(?:name|title)"\s*:\s*"([^"]*)"\s*,\s*"(?:text|content|desc|description)"\s*:\s*"([\s\S]*?)"\s*\}/g;
+    /"(?:name|title|plan_name)"\s*:\s*"([^"]*)"\s*,\s*"(?:text|content|desc|description|detail)"\s*:\s*"([\s\S]*?)"\s*(?:\}|,)/g;
 
   let match;
 
@@ -1743,13 +1860,13 @@ function budgetHTML(c) {
   const parsed = parseBudgetPlansLoose(budgetPlans);
 
   if (Array.isArray(parsed) && parsed.length) {
-    return parsed
+    const html = parsed
       .map((item, index) => {
         const title =
           item.name ||
           item.title ||
           item.plan_name ||
-          item方案 ||
+          item.方案 ||
           `方案${index + 1}`;
 
         const text =
@@ -1760,18 +1877,30 @@ function budgetHTML(c) {
           item.detail ||
           '';
 
+        const cleanTitle = cleanPlanText(title);
+        const cleanText = cleanPlanText(text);
+
+        if (isBadPlanText(cleanTitle) && isBadPlanText(cleanText)) {
+          return '';
+        }
+
         return `
             <div class="budget-item">
-                <b>${esc(title)}</b>
-                <div style="white-space:pre-wrap;">${esc(normalizeText(text))}</div>
+                <b>${esc(isBadPlanText(cleanTitle) ? `方案${index + 1}` : cleanTitle)}</b>
+                ${isBadPlanText(cleanText) ? '' : `<div style="white-space:pre-wrap;">${esc(cleanText)}</div>`}
             </div>
         `;
       })
+      .filter(Boolean)
       .join('');
+
+    if (html) return html;
   }
 
-  if (normalizeText(budgetPlans)) {
-    return `<div class="budget-item" style="white-space:pre-wrap;">${esc(normalizeText(budgetPlans))}</div>`;
+  const text = cleanPlanText(budgetPlans);
+
+  if (text && !looksLikeJsonPlanBlob(text) && !isBadPlanText(text)) {
+    return `<div class="budget-item" style="white-space:pre-wrap;">${esc(text)}</div>`;
   }
 
   return `<div class="budget-item">暂无具体方案。</div>`;
